@@ -1,4 +1,4 @@
-module github.com/xuri/excelize/v2
+module github.com/debugdoctor/excelize-plus/v2
 
 go 1.24.0
 

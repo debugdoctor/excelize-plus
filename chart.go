@@ -649,7 +649,7 @@ func (opts *Chart) parseTitle() {
 //	import (
 //	    "fmt"
 //
-//	    "github.com/xuri/excelize/v2"
+//	    "github.com/debugdoctor/excelize-plus/v2"
 //	)
 //
 //	func main() {
@@ -1079,7 +1079,7 @@ func (opts *Chart) parseTitle() {
 //	import (
 //	    "fmt"
 //
-//	    "github.com/xuri/excelize/v2"
+//	    "github.com/debugdoctor/excelize-plus/v2"
 //	)
 //
 //	func main() {
@@ -1314,12 +1314,17 @@ func (f *File) DeleteChart(sheet, cell string) error {
 // worksheet name and cell reference. If the cell has no charts, it will return
 // an empty slice.
 func (f *File) GetCharts(sheet, cell string) ([]*Chart, error) {
-	col, row, err := CellNameToCoordinates(cell)
-	if err != nil {
-		return nil, err
+	var col, row int
+	filterByCell := cell != ""
+	if filterByCell {
+		var err error
+		col, row, err = CellNameToCoordinates(cell)
+		if err != nil {
+			return nil, err
+		}
+		col--
+		row--
 	}
-	col--
-	row--
 	ws, err := f.workSheetReader(sheet)
 	if err != nil {
 		return nil, err
@@ -1356,7 +1361,7 @@ func (f *File) GetCharts(sheet, cell string) ([]*Chart, error) {
 			if from == nil && deCellAnchor.From != nil {
 				from = &xlsxFrom{Col: deCellAnchor.From.Col, Row: deCellAnchor.From.Row}
 			}
-			if from == nil || from.Col != col || from.Row != row {
+			if filterByCell && (from == nil || from.Col != col || from.Row != row) {
 				continue
 			}
 			if deCellAnchor.GraphicFrame == nil || deCellAnchor.GraphicFrame.Graphic == nil ||

@@ -77,7 +77,7 @@ func parseGraphicOptions(opts *GraphicOptions) *GraphicOptions {
 //	    _ "image/jpeg"
 //	    _ "image/png"
 //
-//	    "github.com/xuri/excelize/v2"
+//	    "github.com/debugdoctor/excelize-plus/v2"
 //	)
 //
 //	func main() {
@@ -198,7 +198,7 @@ func (f *File) AddPicture(sheet, cell, name string, opts *GraphicOptions) error 
 //	    _ "image/jpeg"
 //	    "os"
 //
-//	    "github.com/xuri/excelize/v2"
+//	    "github.com/debugdoctor/excelize-plus/v2"
 //	)
 //
 //	func main() {
