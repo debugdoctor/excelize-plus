@@ -1,8 +1,12 @@
 BSD 3-Clause License
 
+Copyright (c) 2026 debugdoctor.
 Copyright (c) 2016-2025 The excelize Authors.
 Copyright (c) 2011-2017 Geoffrey J. Teale
 All rights reserved.
+
+This project is a derivative work based on excelize
+(https://github.com/xuri/excelize), licensed under the BSD 3-Clause License.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
