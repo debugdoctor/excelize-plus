@@ -573,13 +573,19 @@ func TestGetCharts(t *testing.T) {
 	assert.Equal(t, "bottom", charts[0].Legend.Position)
 	assert.NoError(t, f2.Close())
 
+	// Test GetCharts with empty cell returns all charts on sheet
+	charts, err = f.GetCharts(sheet, "")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+	assert.Equal(t, Col3DClustered, charts[0].Type)
+
 	// Test GetCharts with no charts at cell
 	charts, err = f.GetCharts(sheet, "A1")
 	assert.NoError(t, err)
 	assert.Len(t, charts, 0)
 
 	// Test GetCharts with invalid cell reference
-	_, err = f.GetCharts(sheet, "")
+	_, err = f.GetCharts(sheet, "!")
 	assert.Error(t, err)
 
 	// Test GetCharts on non-existent sheet
@@ -589,6 +595,11 @@ func TestGetCharts(t *testing.T) {
 	// Test GetCharts on sheet without drawings
 	f3 := NewFile()
 	charts, err = f3.GetCharts("Sheet1", "A1")
+	assert.NoError(t, err)
+	assert.Nil(t, charts)
+
+	// Test GetCharts with empty cell on sheet without drawings
+	charts, err = f3.GetCharts("Sheet1", "")
 	assert.NoError(t, err)
 	assert.Nil(t, charts)
 
