@@ -1402,6 +1402,7 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 		return nil, nil
 	}
 	titleRuns := extractTitleRunsFromXML(xmlData)
+	nsCS := parseNsChartSpace(xmlData)
 	var charts []*Chart
 	type chartEntry struct {
 		charts []*cCharts
@@ -1432,8 +1433,9 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 				Type:   chartType,
 				Series: f.extractSeries(c),
 				Legend: ChartLegend{
-					Position: parseChartLegendPosition(cs.Chart.Legend),
-					Layout:   parseChartLayout(getLegendLayout(cs.Chart.Legend)),
+					Position:      parseChartLegendPosition(cs.Chart.Legend),
+					ShowLegendKey: extractShowLegendKey(c),
+					Layout:        parseChartLayout(getLegendLayout(cs.Chart.Legend)),
 				},
 				Title:       titleRuns,
 				TitleLayout: parseChartLayout(getTitleLayout(cs.Chart.Title)),
@@ -1456,7 +1458,32 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 			if c.BubbleScale != nil && c.BubbleScale.Val != nil {
 				chart.BubbleSize = int(*c.BubbleScale.Val)
 			}
+			if c.SplitPos != nil && c.SplitPos.Val != nil {
+				chart.PlotArea.SecondPlotValues = *c.SplitPos.Val
+			}
 			f.extractPlotAreaOpts(c, &chart.PlotArea)
+			f.extractPlotAreaNumFmt(c, &chart.PlotArea)
+			f.extractShowDataTable(pa, &chart.PlotArea)
+			if cs.Chart.DispBlanksAs != nil && cs.Chart.DispBlanksAs.Val != nil {
+				chart.ShowBlanksAs = *cs.Chart.DispBlanksAs.Val
+			}
+			f.extractAxes(pa, chart)
+			// Apply namespace-aware SpPr data
+			if nsCS != nil {
+				nsCharts := getNsCharts(nsCS.Chart.PlotArea, entry.xmlTag)
+				if len(nsCharts) > 0 {
+					applyNsChartData(&nsCharts[0], chart)
+				}
+				if nsCS.Chart.PlotArea != nil && nsCS.Chart.PlotArea.SpPr != nil {
+					chart.PlotArea.Fill = extractNsFill(nsCS.Chart.PlotArea.SpPr)
+				}
+				if nsCS.SpPr != nil {
+					chart.Fill = extractNsFill(nsCS.SpPr)
+					if nsCS.SpPr.Ln != nil {
+						chart.Border = extractNsLine(nsCS.SpPr.Ln)
+					}
+				}
+			}
 			charts = append(charts, chart)
 		}
 	}
@@ -1691,6 +1718,9 @@ func (f *File) extractSeries(c *cCharts) []ChartSeries {
 		if s.BubbleSize != nil && s.BubbleSize.NumRef != nil {
 			cs.Sizes = s.BubbleSize.NumRef.F
 		}
+		if s.Smooth != nil && s.Smooth.Val != nil {
+			cs.Line.Smooth = *s.Smooth.Val
+		}
 		series = append(series, cs)
 	}
 	return series
@@ -1719,6 +1749,210 @@ func (f *File) extractPlotAreaOpts(c *cCharts, pa *ChartPlotArea) {
 	if c.DLbls.ShowLeaderLines != nil && c.DLbls.ShowLeaderLines.Val != nil {
 		pa.ShowLeaderLines = *c.DLbls.ShowLeaderLines.Val
 	}
+}
+
+// applyNsChartData applies namespace-aware SpPr data to chart series and
+// up/down bars from the decoded namespace chart structs.
+func applyNsChartData(nsCharts *decodeNsCharts, chart *Chart) {
+	// Apply series fill/line/marker from namespace-aware structs
+	for i := range nsCharts.Ser {
+		if i >= len(chart.Series) {
+			break
+		}
+		nsSer := &nsCharts.Ser[i]
+		if nsSer.SpPr != nil {
+			chart.Series[i].Fill = extractNsFill(nsSer.SpPr)
+			if nsSer.SpPr.Ln != nil {
+				chart.Series[i].Line = extractNsLine(nsSer.SpPr.Ln)
+			}
+		}
+		if nsSer.Marker != nil {
+			if nsSer.Marker.Symbol != nil && nsSer.Marker.Symbol.Val != nil {
+				chart.Series[i].Marker.Symbol = *nsSer.Marker.Symbol.Val
+			}
+			if nsSer.Marker.Size != nil && nsSer.Marker.Size.Val != nil {
+				chart.Series[i].Marker.Size = *nsSer.Marker.Size.Val
+			}
+			if nsSer.Marker.SpPr != nil {
+				chart.Series[i].Marker.Fill = extractNsFill(nsSer.Marker.SpPr)
+				if nsSer.Marker.SpPr.Ln != nil {
+					chart.Series[i].Marker.Border = extractNsLine(nsSer.Marker.SpPr.Ln)
+				}
+			}
+		}
+		if nsSer.DLbls != nil {
+			if nsSer.DLbls.DLblPos != nil && nsSer.DLbls.DLblPos.Val != nil {
+				chart.Series[i].DataLabelPosition = reverseDataLabelPosition(*nsSer.DLbls.DLblPos.Val)
+			}
+			if nsSer.DLbls.SpPr != nil {
+				chart.Series[i].DataLabel.Fill = extractNsFill(nsSer.DLbls.SpPr)
+			}
+		}
+	}
+	// Apply up/down bars
+	if nsCharts.UpDownBars != nil {
+		if nsCharts.UpDownBars.UpBars != nil && nsCharts.UpDownBars.UpBars.SpPr != nil {
+			chart.PlotArea.UpBars.Fill = extractNsFill(nsCharts.UpDownBars.UpBars.SpPr)
+			if nsCharts.UpDownBars.UpBars.SpPr.Ln != nil {
+				chart.PlotArea.UpBars.Border = extractNsLine(nsCharts.UpDownBars.UpBars.SpPr.Ln)
+			}
+		}
+		if nsCharts.UpDownBars.DownBars != nil && nsCharts.UpDownBars.DownBars.SpPr != nil {
+			chart.PlotArea.DownBars.Fill = extractNsFill(nsCharts.UpDownBars.DownBars.SpPr)
+			if nsCharts.UpDownBars.DownBars.SpPr.Ln != nil {
+				chart.PlotArea.DownBars.Border = extractNsLine(nsCharts.UpDownBars.DownBars.SpPr.Ln)
+			}
+		}
+	}
+}
+
+// reverseDashType converts XML dash type string back to ChartDashType.
+func reverseDashType(s string) ChartDashType {
+	revDash := map[string]ChartDashType{
+		"solid":         ChartDashSolid,
+		"dot":           ChartDashDot,
+		"dash":          ChartDashDash,
+		"lgDash":        ChartDashLgDash,
+		"dashDot":       ChartDashSashDot,
+		"lgDashDot":     ChartDashLgDashDot,
+		"lgDashDotDot":  ChartDashLgDashDotDot,
+		"sysDash":       ChartDashSysDash,
+		"sysDot":        ChartDashSysDot,
+		"sysDashDot":    ChartDashSysDashDot,
+		"sysDashDotDot": ChartDashSysDashDotDot,
+	}
+	if d, ok := revDash[s]; ok {
+		return d
+	}
+	return ChartDashUnset
+}
+
+
+// reverseDataLabelPosition converts XML data label position to enum.
+func reverseDataLabelPosition(s string) ChartDataLabelPositionType {
+	revPos := map[string]ChartDataLabelPositionType{
+		"t":      ChartDataLabelsPositionAbove,
+		"b":      ChartDataLabelsPositionBelow,
+		"l":      ChartDataLabelsPositionLeft,
+		"r":      ChartDataLabelsPositionRight,
+		"ctr":    ChartDataLabelsPositionCenter,
+		"inBase": ChartDataLabelsPositionInsideBase,
+		"inEnd":  ChartDataLabelsPositionInsideEnd,
+		"outEnd": ChartDataLabelsPositionOutsideEnd,
+		"bestFit": ChartDataLabelsPositionBestFit,
+	}
+	if p, ok := revPos[s]; ok {
+		return p
+	}
+	return ChartDataLabelsPositionUnset
+}
+
+
+// extractPlotAreaNumFmt extracts plot area number format from chart DLbls.
+func (f *File) extractPlotAreaNumFmt(c *cCharts, plotArea *ChartPlotArea) {
+	if c.DLbls != nil && c.DLbls.NumFmt != nil {
+		plotArea.NumFmt = ChartNumFmt{
+			CustomNumFmt: c.DLbls.NumFmt.FormatCode,
+			SourceLinked: c.DLbls.NumFmt.SourceLinked,
+		}
+	}
+}
+
+// extractShowDataTable extracts data table visibility from plot area.
+func (f *File) extractShowDataTable(pa *cPlotArea, plotArea *ChartPlotArea) {
+	if pa.DTable != nil {
+		plotArea.ShowDataTable = true
+		if pa.DTable.ShowKeys != nil && pa.DTable.ShowKeys.Val != nil {
+			plotArea.ShowDataTableKeys = *pa.DTable.ShowKeys.Val
+		}
+	}
+}
+
+// extractShowLegendKey extracts ShowLegendKey from chart DLbls.
+func extractShowLegendKey(c *cCharts) bool {
+	if c.DLbls != nil && c.DLbls.ShowLegendKey != nil && c.DLbls.ShowLegendKey.Val != nil {
+		return *c.DLbls.ShowLegendKey.Val
+	}
+	return false
+}
+
+
+// extractAxes extracts X and Y axis properties from the plot area.
+func (f *File) extractAxes(pa *cPlotArea, chart *Chart) {
+	// Category axis → XAxis
+	if len(pa.CatAx) > 0 {
+		f.extractAxisOpts(pa.CatAx[0], &chart.XAxis)
+	}
+	if len(pa.DateAx) > 0 {
+		f.extractAxisOpts(pa.DateAx[0], &chart.XAxis)
+	}
+	// Value axis → YAxis
+	if len(pa.ValAx) > 0 {
+		f.extractAxisOpts(pa.ValAx[0], &chart.YAxis)
+		// If there's a secondary value axis
+		if len(pa.ValAx) > 1 {
+			chart.YAxis.Secondary = true
+		}
+	}
+}
+
+// extractAxisOpts extracts axis properties from cAxs.
+func (f *File) extractAxisOpts(ax *cAxs, axis *ChartAxis) {
+	if ax == nil {
+		return
+	}
+	if ax.Delete != nil && ax.Delete.Val != nil {
+		axis.None = *ax.Delete.Val
+	}
+	if ax.MajorGridlines != nil {
+		axis.MajorGridLines = true
+	}
+	if ax.MinorGridlines != nil {
+		axis.MinorGridLines = true
+	}
+	if ax.MajorUnit != nil && ax.MajorUnit.Val != nil {
+		axis.MajorUnit = *ax.MajorUnit.Val
+	}
+	if ax.TickLblPos != nil && ax.TickLblPos.Val != nil {
+		axis.TickLabelPosition = reverseTickLabelPosition(*ax.TickLblPos.Val)
+	}
+	if ax.TickLblSkip != nil && ax.TickLblSkip.Val != nil {
+		axis.TickLabelSkip = *ax.TickLblSkip.Val
+	}
+	if ax.Scaling != nil {
+		if ax.Scaling.Orientation != nil && ax.Scaling.Orientation.Val != nil && *ax.Scaling.Orientation.Val == "maxMin" {
+			axis.ReverseOrder = true
+		}
+		if ax.Scaling.Max != nil && ax.Scaling.Max.Val != nil {
+			axis.Maximum = ax.Scaling.Max.Val
+		}
+		if ax.Scaling.Min != nil && ax.Scaling.Min.Val != nil {
+			axis.Minimum = ax.Scaling.Min.Val
+		}
+		if ax.Scaling.LogBase != nil && ax.Scaling.LogBase.Val != nil {
+			axis.LogBase = *ax.Scaling.LogBase.Val
+		}
+	}
+	if ax.NumFmt != nil {
+		axis.NumFmt = ChartNumFmt{
+			CustomNumFmt: ax.NumFmt.FormatCode,
+			SourceLinked: ax.NumFmt.SourceLinked,
+		}
+	}
+}
+
+// reverseTickLabelPosition converts XML tick label position to enum.
+func reverseTickLabelPosition(s string) ChartTickLabelPositionType {
+	revPos := map[string]ChartTickLabelPositionType{
+		"nextTo": ChartTickLabelNextToAxis,
+		"high":   ChartTickLabelHigh,
+		"low":    ChartTickLabelLow,
+		"none":   ChartTickLabelNone,
+	}
+	if p, ok := revPos[s]; ok {
+		return p
+	}
+	return ChartTickLabelNextToAxis
 }
 
 // parseChartLegendPosition returns the legend position string from cLegend.
@@ -1780,20 +2014,26 @@ func parseChartLayout(layout *cLayout) *ChartLayout {
 	return cl
 }
 
-// decodeChartTitle is used for deserializing chart titles with proper namespace
-// handling (the cRich/aP/aR structs use "a:" prefix tags which only work for
-// marshaling, not unmarshaling).
-type decodeChartTitle struct {
+// The following decode* types are used for deserializing chart XML with proper
+// namespace handling. The internal cSpPr/aSolidFill/aLn etc. use "a:" prefix
+// tags which only work for marshaling, not unmarshaling. These decode structs
+// use full namespace URIs.
+
+const nsChart = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+const nsDrawingML = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+type decodeChartFull struct {
 	XMLName xml.Name `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chartSpace"`
 	Chart   struct {
-		Title *decodeRichTitle `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart title"`
-	} `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chart"`
+		Title *decodeRichTitle `xml:"title"`
+	} `xml:"chart"`
+	SpPr *decodeNsSpPr `xml:"spPr"`
 }
 
 type decodeRichTitle struct {
 	Tx struct {
-		Rich *decodeRich `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart rich"`
-	} `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart tx"`
+		Rich *decodeRich `xml:"rich"`
+	} `xml:"tx"`
 }
 
 type decodeRich struct {
@@ -1808,9 +2048,111 @@ type decodeRichR struct {
 	T string `xml:"http://schemas.openxmlformats.org/drawingml/2006/main t"`
 }
 
+// decodeNsSpPr handles a:solidFill, a:noFill, a:ln with proper namespaces.
+type decodeNsSpPr struct {
+	NoFill    *string          `xml:"http://schemas.openxmlformats.org/drawingml/2006/main noFill"`
+	SolidFill *decodeNsFill    `xml:"http://schemas.openxmlformats.org/drawingml/2006/main solidFill"`
+	Ln        *decodeNsLn      `xml:"http://schemas.openxmlformats.org/drawingml/2006/main ln"`
+}
+
+type decodeNsFill struct {
+	SchemeClr *decodeNsSchemeClr `xml:"http://schemas.openxmlformats.org/drawingml/2006/main schemeClr"`
+	SrgbClr   *decodeNsSrgbClr   `xml:"http://schemas.openxmlformats.org/drawingml/2006/main srgbClr"`
+}
+
+type decodeNsSchemeClr struct {
+	Val string `xml:"val,attr"`
+}
+
+type decodeNsSrgbClr struct {
+	Val   string          `xml:"val,attr"`
+	Alpha *decodeNsAlpha  `xml:"http://schemas.openxmlformats.org/drawingml/2006/main alpha"`
+}
+
+type decodeNsAlpha struct {
+	Val int `xml:"val,attr"`
+}
+
+type decodeNsLn struct {
+	W         int              `xml:"w,attr,omitempty"`
+	NoFill    *string          `xml:"http://schemas.openxmlformats.org/drawingml/2006/main noFill"`
+	SolidFill *decodeNsFill    `xml:"http://schemas.openxmlformats.org/drawingml/2006/main solidFill"`
+	PrstDash  *decodeNsDash    `xml:"http://schemas.openxmlformats.org/drawingml/2006/main prstDash"`
+}
+
+type decodeNsDash struct {
+	Val string `xml:"val,attr"`
+}
+
+// decodeNsSer handles series with proper namespace for SpPr.
+type decodeNsSer struct {
+	IDx    *attrValInt    `xml:"idx"`
+	SpPr   *decodeNsSpPr  `xml:"spPr"`
+	Marker *decodeNsMarker `xml:"marker"`
+	DLbls  *decodeNsDLbls  `xml:"dLbls"`
+}
+
+type decodeNsMarker struct {
+	Symbol *attrValString `xml:"symbol"`
+	Size   *attrValInt    `xml:"size"`
+	SpPr   *decodeNsSpPr  `xml:"spPr"`
+}
+
+type decodeNsDLbls struct {
+	NumFmt  *cNumFmt       `xml:"numFmt"`
+	SpPr    *decodeNsSpPr  `xml:"spPr"`
+	DLblPos *attrValString `xml:"dLblPos"`
+}
+
+// decodeNsCharts handles chart-level data with proper SpPr namespace.
+type decodeNsCharts struct {
+	Ser        []decodeNsSer       `xml:"ser"`
+	DLbls      *decodeNsDLbls      `xml:"dLbls"`
+	UpDownBars *decodeNsUpDownBars `xml:"upDownBars"`
+}
+
+type decodeNsUpDownBars struct {
+	UpBars   *decodeNsChartLines `xml:"upBars"`
+	DownBars *decodeNsChartLines `xml:"downBars"`
+}
+
+type decodeNsChartLines struct {
+	SpPr *decodeNsSpPr `xml:"spPr"`
+}
+
+// decodeNsPlotArea for extracting SpPr from plot area elements.
+type decodeNsPlotArea struct {
+	AreaChart      []decodeNsCharts `xml:"areaChart"`
+	Area3DChart    []decodeNsCharts `xml:"area3DChart"`
+	BarChart       []decodeNsCharts `xml:"barChart"`
+	Bar3DChart     []decodeNsCharts `xml:"bar3DChart"`
+	BubbleChart    []decodeNsCharts `xml:"bubbleChart"`
+	DoughnutChart  []decodeNsCharts `xml:"doughnutChart"`
+	LineChart      []decodeNsCharts `xml:"lineChart"`
+	Line3DChart    []decodeNsCharts `xml:"line3DChart"`
+	StockChart     []decodeNsCharts `xml:"stockChart"`
+	PieChart       []decodeNsCharts `xml:"pieChart"`
+	Pie3DChart     []decodeNsCharts `xml:"pie3DChart"`
+	OfPieChart     []decodeNsCharts `xml:"ofPieChart"`
+	RadarChart     []decodeNsCharts `xml:"radarChart"`
+	ScatterChart   []decodeNsCharts `xml:"scatterChart"`
+	Surface3DChart []decodeNsCharts `xml:"surface3DChart"`
+	SurfaceChart   []decodeNsCharts `xml:"surfaceChart"`
+	SpPr           *decodeNsSpPr    `xml:"spPr"`
+}
+
+type decodeNsChartSpace struct {
+	XMLName xml.Name `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chartSpace"`
+	Chart   struct {
+		Title    *decodeRichTitle  `xml:"title"`
+		PlotArea *decodeNsPlotArea `xml:"plotArea"`
+	} `xml:"chart"`
+	SpPr *decodeNsSpPr `xml:"spPr"`
+}
+
 // extractTitleRunsFromXML extracts rich text runs from chart XML bytes.
 func extractTitleRunsFromXML(xmlData []byte) []RichTextRun {
-	var dt decodeChartTitle
+	var dt decodeNsChartSpace
 	if err := xml.Unmarshal(xmlData, &dt); err != nil || dt.Chart.Title == nil {
 		return nil
 	}
@@ -1826,6 +2168,93 @@ func extractTitleRunsFromXML(xmlData []byte) []RichTextRun {
 		runs = append(runs, RichTextRun{Text: p.R.T})
 	}
 	return runs
+}
+
+// parseNsChartSpace parses chart XML with namespace-aware decode structs for
+// extracting a:-prefixed properties (SpPr, fills, lines, markers).
+func parseNsChartSpace(xmlData []byte) *decodeNsChartSpace {
+	var ns decodeNsChartSpace
+	if err := xml.Unmarshal(xmlData, &ns); err != nil {
+		return nil
+	}
+	return &ns
+}
+
+// getNsCharts returns the decodeNsCharts slice matching the given xmlTag.
+func getNsCharts(pa *decodeNsPlotArea, xmlTag string) []decodeNsCharts {
+	if pa == nil {
+		return nil
+	}
+	switch xmlTag {
+	case "areaChart":
+		return pa.AreaChart
+	case "area3DChart":
+		return pa.Area3DChart
+	case "barChart":
+		return pa.BarChart
+	case "bar3DChart":
+		return pa.Bar3DChart
+	case "bubbleChart":
+		return pa.BubbleChart
+	case "doughnutChart":
+		return pa.DoughnutChart
+	case "lineChart":
+		return pa.LineChart
+	case "line3DChart":
+		return pa.Line3DChart
+	case "stockChart":
+		return pa.StockChart
+	case "pieChart":
+		return pa.PieChart
+	case "pie3DChart":
+		return pa.Pie3DChart
+	case "ofPieChart":
+		return pa.OfPieChart
+	case "radarChart":
+		return pa.RadarChart
+	case "scatterChart":
+		return pa.ScatterChart
+	case "surface3DChart":
+		return pa.Surface3DChart
+	case "surfaceChart":
+		return pa.SurfaceChart
+	}
+	return nil
+}
+
+// extractNsFill converts decodeNsSpPr to a Fill.
+func extractNsFill(spPr *decodeNsSpPr) Fill {
+	if spPr == nil || spPr.SolidFill == nil || spPr.SolidFill.SrgbClr == nil {
+		return Fill{}
+	}
+	f := Fill{Type: "pattern", Pattern: 1, Color: []string{spPr.SolidFill.SrgbClr.Val}}
+	if spPr.SolidFill.SrgbClr.Alpha != nil {
+		f.Transparency = 100 - spPr.SolidFill.SrgbClr.Alpha.Val/1000
+	}
+	return f
+}
+
+// extractNsLine converts decodeNsLn to a ChartLine.
+func extractNsLine(ln *decodeNsLn) ChartLine {
+	if ln == nil {
+		return ChartLine{}
+	}
+	cl := ChartLine{}
+	if ln.W > 0 {
+		cl.Width = float64(ln.W) / 12700
+	}
+	if ln.NoFill != nil {
+		cl.Type = ChartLineNone
+	} else if ln.SolidFill != nil {
+		cl.Type = ChartLineSolid
+		if ln.SolidFill.SrgbClr != nil {
+			cl.Fill = Fill{Type: "pattern", Pattern: 1, Color: []string{ln.SolidFill.SrgbClr.Val}}
+		}
+	}
+	if ln.PrstDash != nil {
+		cl.Dash = reverseDashType(ln.PrstDash.Val)
+	}
+	return cl
 }
 
 // countCharts provides a function to get chart files count storage in the

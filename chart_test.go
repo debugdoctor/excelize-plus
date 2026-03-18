@@ -639,6 +639,109 @@ func TestGetCharts(t *testing.T) {
 	})
 }
 
+func TestGetChartsFullProperties(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange", "Pear"},
+		{"Small", 2, 3, 3},
+		{"Normal", 5, 2, 4},
+		{"Large", 6, 7, 8},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	maximum, minimum := 10.0, 0.0
+	assert.NoError(t, f.AddChart(sheet, "E1", &Chart{
+		Type: Col,
+		Series: []ChartSeries{
+			{
+				Name:       "Sheet1!$A$2",
+				Categories: "Sheet1!$B$1:$D$1",
+				Values:     "Sheet1!$B$2:$D$2",
+				Fill:       Fill{Type: "pattern", Color: []string{"FF0000"}, Pattern: 1, Transparency: 50},
+				Line:       ChartLine{Type: ChartLineSolid, Width: 2, Dash: ChartDashDot},
+			},
+			{
+				Name:       "Sheet1!$A$3",
+				Categories: "Sheet1!$B$1:$D$1",
+				Values:     "Sheet1!$B$3:$D$3",
+			},
+		},
+		Title:        []RichTextRun{{Text: "Full Props"}},
+		ShowBlanksAs: "zero",
+		Fill:         Fill{Type: "pattern", Color: []string{"EEEEEE"}, Pattern: 1},
+		Border:       ChartLine{Type: ChartLineSolid, Width: 2},
+		Legend: ChartLegend{
+			Position:      "bottom",
+			ShowLegendKey: true,
+		},
+		PlotArea: ChartPlotArea{
+			ShowVal:     true,
+			ShowPercent: true,
+			ShowCatName: true,
+			ShowSerName: true,
+			Fill:        Fill{Type: "pattern", Color: []string{"FFFFFF"}, Pattern: 1},
+			NumFmt:      ChartNumFmt{CustomNumFmt: "0.00%"},
+		},
+		XAxis: ChartAxis{
+			MajorGridLines: true,
+			TickLabelSkip:  2,
+			ReverseOrder:   true,
+			Maximum:        &maximum,
+			Minimum:        &minimum,
+		},
+		YAxis: ChartAxis{
+			MajorGridLines: true,
+			MajorUnit:      2,
+			LogBase:        10,
+			NumFmt:         ChartNumFmt{CustomNumFmt: "#,##0"},
+		},
+	}))
+
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+	c := charts[0]
+
+	// Chart level
+	assert.Equal(t, Col, c.Type)
+	assert.Equal(t, "zero", c.ShowBlanksAs)
+	assert.Equal(t, "bottom", c.Legend.Position)
+	assert.True(t, c.Legend.ShowLegendKey)
+
+	// Series
+	assert.Len(t, c.Series, 2)
+	assert.Equal(t, "Sheet1!$A$2", c.Series[0].Name)
+	assert.Equal(t, "FF0000", c.Series[0].Fill.Color[0])
+	assert.Equal(t, 50, c.Series[0].Fill.Transparency)
+
+	// Plot area
+	assert.True(t, c.PlotArea.ShowVal)
+	assert.True(t, c.PlotArea.ShowPercent)
+	assert.True(t, c.PlotArea.ShowCatName)
+	assert.True(t, c.PlotArea.ShowSerName)
+	assert.Equal(t, "0.00%", c.PlotArea.NumFmt.CustomNumFmt)
+
+	// XAxis
+	assert.True(t, c.XAxis.MajorGridLines)
+	assert.Equal(t, 2, c.XAxis.TickLabelSkip)
+	assert.True(t, c.XAxis.ReverseOrder)
+
+	// YAxis
+	assert.True(t, c.YAxis.MajorGridLines)
+	assert.InDelta(t, 2.0, c.YAxis.MajorUnit, 1e-9)
+	assert.InDelta(t, 10.0, c.YAxis.LogBase, 1e-9)
+	assert.Equal(t, "#,##0", c.YAxis.NumFmt.CustomNumFmt)
+
+	assert.NoError(t, f2.Close())
+}
+
 func TestGetChartsWithLayout(t *testing.T) {
 	f := NewFile()
 	sheet := "Sheet1"
