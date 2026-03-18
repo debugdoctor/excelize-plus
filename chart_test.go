@@ -639,6 +639,58 @@ func TestGetCharts(t *testing.T) {
 	})
 }
 
+func TestGetChartsTitleFont(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange"},
+		{"Small", 2, 3},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	assert.NoError(t, f.AddChart(sheet, "E1", &Chart{
+		Type: Col,
+		Series: []ChartSeries{
+			{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$C$1", Values: "Sheet1!$B$2:$C$2"},
+		},
+		Title: []RichTextRun{{
+			Text: "Styled Title",
+			Font: &Font{
+				Bold:      true,
+				Italic:    true,
+				Size:      16,
+				Color:     "FF0000",
+				Family:    "Arial",
+				Strike:    true,
+				Underline: "sng",
+			},
+		}},
+	}))
+
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+	assert.Len(t, charts[0].Title, 1)
+	assert.Equal(t, "Styled Title", charts[0].Title[0].Text)
+	assert.NotNil(t, charts[0].Title[0].Font)
+	font := charts[0].Title[0].Font
+	assert.True(t, font.Bold)
+	assert.True(t, font.Italic)
+	assert.True(t, font.Strike)
+	assert.InDelta(t, 16.0, font.Size, 1e-9)
+	assert.Equal(t, "FF0000", font.Color)
+	assert.Equal(t, "Arial", font.Family)
+	assert.Equal(t, "sng", font.Underline)
+
+	assert.NoError(t, f2.Close())
+}
+
 func TestGetChartsFullProperties(t *testing.T) {
 	f := NewFile()
 	sheet := "Sheet1"

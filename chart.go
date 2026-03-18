@@ -2045,7 +2045,23 @@ type decodeRichP struct {
 }
 
 type decodeRichR struct {
-	T string `xml:"http://schemas.openxmlformats.org/drawingml/2006/main t"`
+	RPr *decodeNsRPr `xml:"http://schemas.openxmlformats.org/drawingml/2006/main rPr"`
+	T   string       `xml:"http://schemas.openxmlformats.org/drawingml/2006/main t"`
+}
+
+// decodeNsRPr handles a:rPr (run properties) for font extraction.
+type decodeNsRPr struct {
+	B         bool            `xml:"b,attr"`
+	I         bool            `xml:"i,attr"`
+	Strike    string          `xml:"strike,attr,omitempty"`
+	U         string          `xml:"u,attr,omitempty"`
+	Sz        float64         `xml:"sz,attr,omitempty"`
+	SolidFill *decodeNsFill   `xml:"http://schemas.openxmlformats.org/drawingml/2006/main solidFill"`
+	Latin     *decodeNsLatin  `xml:"http://schemas.openxmlformats.org/drawingml/2006/main latin"`
+}
+
+type decodeNsLatin struct {
+	Typeface string `xml:"typeface,attr"`
 }
 
 // decodeNsSpPr handles a:solidFill, a:noFill, a:ln with proper namespaces.
@@ -2165,9 +2181,44 @@ func extractTitleRunsFromXML(xmlData []byte) []RichTextRun {
 		if p.R == nil {
 			continue
 		}
-		runs = append(runs, RichTextRun{Text: p.R.T})
+		run := RichTextRun{Text: p.R.T}
+		if p.R.RPr != nil {
+			run.Font = extractNsRPrFont(p.R.RPr)
+		}
+		runs = append(runs, run)
 	}
 	return runs
+}
+
+// extractNsRPrFont converts decodeNsRPr to a Font struct.
+func extractNsRPrFont(rpr *decodeNsRPr) *Font {
+	if rpr == nil {
+		return nil
+	}
+	f := &Font{
+		Bold:   rpr.B,
+		Italic: rpr.I,
+	}
+	if rpr.Sz > 0 {
+		f.Size = rpr.Sz / 100
+	}
+	if rpr.Strike == "sngStrike" || rpr.Strike == "dblStrike" {
+		f.Strike = true
+	}
+	if rpr.U != "" {
+		f.Underline = rpr.U
+	}
+	if rpr.Latin != nil && rpr.Latin.Typeface != "" {
+		f.Family = rpr.Latin.Typeface
+	}
+	if rpr.SolidFill != nil && rpr.SolidFill.SrgbClr != nil {
+		f.Color = rpr.SolidFill.SrgbClr.Val
+	}
+	// Return nil if font has no meaningful properties set
+	if !f.Bold && !f.Italic && !f.Strike && f.Size == 0 && f.Family == "" && f.Color == "" && f.Underline == "" {
+		return nil
+	}
+	return f
 }
 
 // parseNsChartSpace parses chart XML with namespace-aware decode structs for
