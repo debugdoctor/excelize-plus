@@ -1468,7 +1468,7 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 				chart.ShowBlanksAs = *cs.Chart.DispBlanksAs.Val
 			}
 			f.extractAxes(pa, chart)
-			// Apply namespace-aware SpPr data
+			// Apply namespace-aware SpPr data and axis titles
 			if nsCS != nil {
 				nsCharts := getNsCharts(nsCS.Chart.PlotArea, entry.xmlTag)
 				if len(nsCharts) > 0 {
@@ -1483,6 +1483,7 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 						chart.Border = extractNsLine(nsCS.SpPr.Ln)
 					}
 				}
+				extractNsAxesTitles(nsCS.Chart.PlotArea, chart)
 			}
 			charts = append(charts, chart)
 		}
@@ -1896,6 +1897,43 @@ func (f *File) extractAxes(pa *cPlotArea, chart *Chart) {
 	}
 }
 
+// extractNsAxesTitles extracts axis titles using namespace-aware structs.
+func extractNsAxesTitles(nsPa *decodeNsPlotArea, chart *Chart) {
+	if nsPa == nil {
+		return
+	}
+	// CatAx / DateAx → XAxis.Title
+	if len(nsPa.CatAx) > 0 && nsPa.CatAx[0].Title != nil {
+		chart.XAxis.Title = extractNsRichTitle(nsPa.CatAx[0].Title)
+	}
+	if len(nsPa.DateAx) > 0 && nsPa.DateAx[0].Title != nil {
+		chart.XAxis.Title = extractNsRichTitle(nsPa.DateAx[0].Title)
+	}
+	// ValAx → YAxis.Title
+	if len(nsPa.ValAx) > 0 && nsPa.ValAx[0].Title != nil {
+		chart.YAxis.Title = extractNsRichTitle(nsPa.ValAx[0].Title)
+	}
+}
+
+// extractNsRichTitle extracts []RichTextRun from a decodeRichTitle.
+func extractNsRichTitle(dt *decodeRichTitle) []RichTextRun {
+	if dt == nil || dt.Tx.Rich == nil {
+		return nil
+	}
+	var runs []RichTextRun
+	for _, p := range dt.Tx.Rich.P {
+		if p.R == nil {
+			continue
+		}
+		run := RichTextRun{Text: p.R.T}
+		if p.R.RPr != nil {
+			run.Font = extractNsRPrFont(p.R.RPr)
+		}
+		runs = append(runs, run)
+	}
+	return runs
+}
+
 // extractAxisOpts extracts axis properties from cAxs.
 func (f *File) extractAxisOpts(ax *cAxs, axis *ChartAxis) {
 	if ax == nil {
@@ -2136,6 +2174,11 @@ type decodeNsChartLines struct {
 	SpPr *decodeNsSpPr `xml:"spPr"`
 }
 
+// decodeNsAxs handles axis title extraction with proper namespace.
+type decodeNsAxs struct {
+	Title *decodeRichTitle `xml:"title"`
+}
+
 // decodeNsPlotArea for extracting SpPr from plot area elements.
 type decodeNsPlotArea struct {
 	AreaChart      []decodeNsCharts `xml:"areaChart"`
@@ -2154,6 +2197,10 @@ type decodeNsPlotArea struct {
 	ScatterChart   []decodeNsCharts `xml:"scatterChart"`
 	Surface3DChart []decodeNsCharts `xml:"surface3DChart"`
 	SurfaceChart   []decodeNsCharts `xml:"surfaceChart"`
+	CatAx          []decodeNsAxs    `xml:"catAx"`
+	ValAx          []decodeNsAxs    `xml:"valAx"`
+	DateAx         []decodeNsAxs    `xml:"dateAx"`
+	SerAx          []decodeNsAxs    `xml:"serAx"`
 	SpPr           *decodeNsSpPr    `xml:"spPr"`
 }
 

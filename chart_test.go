@@ -691,6 +691,55 @@ func TestGetChartsTitleFont(t *testing.T) {
 	assert.NoError(t, f2.Close())
 }
 
+func TestGetChartsAxisTitle(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange"},
+		{"Small", 2, 3},
+		{"Normal", 5, 2},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	assert.NoError(t, f.AddChart(sheet, "E1", &Chart{
+		Type: Col,
+		Series: []ChartSeries{
+			{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$C$1", Values: "Sheet1!$B$2:$C$2"},
+		},
+		Title: []RichTextRun{{Text: "Chart With Axis Titles"}},
+		XAxis: ChartAxis{
+			Title: []RichTextRun{{Text: "Category Axis"}},
+		},
+		YAxis: ChartAxis{
+			Title: []RichTextRun{{Text: "Value Axis", Font: &Font{Bold: true, Size: 12, Color: "FF0000"}}},
+		},
+	}))
+
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+
+	// XAxis title
+	assert.Len(t, charts[0].XAxis.Title, 1)
+	assert.Equal(t, "Category Axis", charts[0].XAxis.Title[0].Text)
+
+	// YAxis title
+	assert.Len(t, charts[0].YAxis.Title, 1)
+	assert.Equal(t, "Value Axis", charts[0].YAxis.Title[0].Text)
+	assert.NotNil(t, charts[0].YAxis.Title[0].Font)
+	assert.True(t, charts[0].YAxis.Title[0].Font.Bold)
+	assert.InDelta(t, 12.0, charts[0].YAxis.Title[0].Font.Size, 1e-9)
+	assert.Equal(t, "FF0000", charts[0].YAxis.Title[0].Font.Color)
+
+	assert.NoError(t, f2.Close())
+}
+
 func TestGetChartsFullProperties(t *testing.T) {
 	f := NewFile()
 	sheet := "Sheet1"
