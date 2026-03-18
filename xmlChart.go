@@ -56,10 +56,27 @@ type cChart struct {
 // title.
 type cTitle struct {
 	Tx      cTx          `xml:"tx,omitempty"`
-	Layout  string       `xml:"layout,omitempty"`
+	Layout  *cLayout     `xml:"layout"`
 	Overlay *attrValBool `xml:"overlay"`
 	SpPr    cSpPr        `xml:"spPr,omitempty"`
 	TxPr    cTxPr        `xml:"txPr,omitempty"`
+}
+
+// cLayout directly maps the layout element. This element specifies the layout
+// of chart elements.
+type cLayout struct {
+	ManualLayout *cManualLayout `xml:"manualLayout"`
+}
+
+// cManualLayout directly maps the manualLayout element. This element specifies
+// the exact position and size of a chart element.
+type cManualLayout struct {
+	XMode  *attrValString `xml:"xMode"`
+	YMode  *attrValString `xml:"yMode"`
+	X      *attrValFloat  `xml:"x"`
+	Y      *attrValFloat  `xml:"y"`
+	W      *attrValFloat  `xml:"w"`
+	H      *attrValFloat  `xml:"h"`
 }
 
 // cTx (Chart Text) directly maps the tx element. This element specifies text
@@ -347,7 +364,7 @@ type cView3D struct {
 // cPlotArea directly maps the plotArea element. This element specifies the
 // plot area of the chart.
 type cPlotArea struct {
-	Layout         *string    `xml:"layout"`
+	Layout         *cLayout   `xml:"layout"`
 	AreaChart      []*cCharts `xml:"areaChart"`
 	Area3DChart    []*cCharts `xml:"area3DChart"`
 	BarChart       []*cCharts `xml:"barChart"`
@@ -567,7 +584,7 @@ type cLegendEntry struct {
 // cLegend (Legend) directly maps the legend element. This element specifies
 // the legend.
 type cLegend struct {
-	Layout      *string        `xml:"layout"`
+	Layout      *cLayout       `xml:"layout"`
 	LegendPos   *attrValString `xml:"legendPos"`
 	LegendEntry []cLegendEntry `xml:"legendEntry"`
 	Overlay     *attrValBool   `xml:"overlay"`
@@ -633,6 +650,14 @@ type ChartUpDownBar struct {
 	Border ChartLine
 }
 
+// ChartLayout directly maps the format settings of the chart layout.
+type ChartLayout struct {
+	X      float64
+	Y      float64
+	Width  float64
+	Height float64
+}
+
 // ChartPlotArea directly maps the format settings of the plot area.
 type ChartPlotArea struct {
 	SecondPlotValues  int
@@ -645,6 +670,7 @@ type ChartPlotArea struct {
 	ShowSerName       bool
 	ShowVal           bool
 	Fill              Fill
+	Layout            *ChartLayout
 	UpBars            ChartUpDownBar
 	DownBars          ChartUpDownBar
 	NumFmt            ChartNumFmt
@@ -658,6 +684,7 @@ type Chart struct {
 	Dimension    ChartDimension
 	Legend       ChartLegend
 	Title        []RichTextRun
+	TitleLayout  *ChartLayout
 	VaryColors   *bool
 	XAxis        ChartAxis
 	YAxis        ChartAxis
@@ -676,6 +703,7 @@ type Chart struct {
 type ChartLegend struct {
 	Position      string
 	ShowLegendKey bool
+	Layout        *ChartLayout
 	Font          *Font
 }
 

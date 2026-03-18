@@ -528,6 +528,186 @@ func TestDeleteChart(t *testing.T) {
 	assert.NoError(t, f.Close())
 }
 
+func TestGetCharts(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	// Set up data
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange", "Pear"},
+		{"Small", 2, 3, 3},
+		{"Normal", 5, 2, 4},
+		{"Large", 6, 7, 8},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	series := []ChartSeries{
+		{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$2:$D$2"},
+		{Name: "Sheet1!$A$3", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$3:$D$3"},
+		{Name: "Sheet1!$A$4", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$4:$D$4"},
+	}
+
+	// Test basic GetCharts with Col3DClustered
+	assert.NoError(t, f.AddChart(sheet, "E1", &Chart{
+		Type:   Col3DClustered,
+		Series: series,
+		Title:  []RichTextRun{{Text: "Clustered Column Chart"}},
+		Legend: ChartLegend{Position: "bottom"},
+	}))
+
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+	assert.Equal(t, Col3DClustered, charts[0].Type)
+	assert.Len(t, charts[0].Series, 3)
+	assert.Equal(t, "Sheet1!$A$2", charts[0].Series[0].Name)
+	assert.Equal(t, "Sheet1!$B$1:$D$1", charts[0].Series[0].Categories)
+	assert.Equal(t, "Sheet1!$B$2:$D$2", charts[0].Series[0].Values)
+	assert.Len(t, charts[0].Title, 1)
+	assert.Equal(t, "Clustered Column Chart", charts[0].Title[0].Text)
+	assert.Equal(t, "bottom", charts[0].Legend.Position)
+	assert.NoError(t, f2.Close())
+
+	// Test GetCharts with no charts at cell
+	charts, err = f.GetCharts(sheet, "A1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 0)
+
+	// Test GetCharts with invalid cell reference
+	_, err = f.GetCharts(sheet, "")
+	assert.Error(t, err)
+
+	// Test GetCharts on non-existent sheet
+	_, err = f.GetCharts("SheetN", "A1")
+	assert.Error(t, err)
+
+	// Test GetCharts on sheet without drawings
+	f3 := NewFile()
+	charts, err = f3.GetCharts("Sheet1", "A1")
+	assert.NoError(t, err)
+	assert.Nil(t, charts)
+
+	// Test various chart types round-trip
+	t.Run("chart_types", func(t *testing.T) {
+		for _, tc := range []struct {
+			chartType ChartType
+			cell      string
+		}{
+			{Col, "E1"},
+			{Bar, "M1"},
+			{Line, "U1"},
+			{Pie, "E16"},
+			{Scatter, "M16"},
+			{Area, "U16"},
+			{Doughnut, "E32"},
+			{Radar, "M32"},
+		} {
+			f := NewFile()
+			for r, row := range [][]interface{}{
+				{nil, "Apple", "Orange", "Pear"},
+				{"Small", 2, 3, 3},
+				{"Normal", 5, 2, 4},
+				{"Large", 6, 7, 8},
+			} {
+				cell, _ := CoordinatesToCellName(1, r+1)
+				assert.NoError(t, f.SetSheetRow("Sheet1", cell, &row))
+			}
+			s := series
+			if tc.chartType == Pie || tc.chartType == Doughnut {
+				s = []ChartSeries{{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$2:$D$2"}}
+			}
+			assert.NoError(t, f.AddChart("Sheet1", tc.cell, &Chart{
+				Type:   tc.chartType,
+				Series: s,
+				Title:  []RichTextRun{{Text: "Test"}},
+			}))
+			var buf bytes.Buffer
+			assert.NoError(t, f.Write(&buf))
+			f2, err := OpenReader(&buf)
+			assert.NoError(t, err)
+			charts, err := f2.GetCharts("Sheet1", tc.cell)
+			assert.NoError(t, err)
+			assert.Len(t, charts, 1, "chart type %d", tc.chartType)
+			assert.Equal(t, tc.chartType, charts[0].Type, "chart type %d", tc.chartType)
+			assert.NoError(t, f2.Close())
+		}
+	})
+}
+
+func TestGetChartsWithLayout(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange", "Pear"},
+		{"Small", 2, 3, 3},
+		{"Normal", 5, 2, 4},
+		{"Large", 6, 7, 8},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	series := []ChartSeries{
+		{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$2:$D$2"},
+		{Name: "Sheet1!$A$3", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$3:$D$3"},
+	}
+
+	titleLayout := &ChartLayout{X: 0.1, Y: 0.05, Width: 0.8, Height: 0.1}
+	legendLayout := &ChartLayout{X: 0.7, Y: 0.3, Width: 0.25, Height: 0.4}
+	plotLayout := &ChartLayout{X: 0.1, Y: 0.2, Width: 0.6, Height: 0.7}
+
+	assert.NoError(t, f.AddChart(sheet, "E1", &Chart{
+		Type:        Col,
+		Series:      series,
+		Title:       []RichTextRun{{Text: "Layout Test"}},
+		TitleLayout: titleLayout,
+		Legend: ChartLegend{
+			Position: "right",
+			Layout:   legendLayout,
+		},
+		PlotArea: ChartPlotArea{
+			Layout:  plotLayout,
+			ShowVal: true,
+		},
+	}))
+
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+
+	// Verify title layout
+	assert.NotNil(t, charts[0].TitleLayout)
+	assert.InDelta(t, 0.1, charts[0].TitleLayout.X, 1e-9)
+	assert.InDelta(t, 0.05, charts[0].TitleLayout.Y, 1e-9)
+	assert.InDelta(t, 0.8, charts[0].TitleLayout.Width, 1e-9)
+	assert.InDelta(t, 0.1, charts[0].TitleLayout.Height, 1e-9)
+
+	// Verify legend layout
+	assert.NotNil(t, charts[0].Legend.Layout)
+	assert.InDelta(t, 0.7, charts[0].Legend.Layout.X, 1e-9)
+	assert.InDelta(t, 0.3, charts[0].Legend.Layout.Y, 1e-9)
+	assert.InDelta(t, 0.25, charts[0].Legend.Layout.Width, 1e-9)
+	assert.InDelta(t, 0.4, charts[0].Legend.Layout.Height, 1e-9)
+
+	// Verify plot area layout
+	assert.NotNil(t, charts[0].PlotArea.Layout)
+	assert.InDelta(t, 0.1, charts[0].PlotArea.Layout.X, 1e-9)
+	assert.InDelta(t, 0.2, charts[0].PlotArea.Layout.Y, 1e-9)
+	assert.InDelta(t, 0.6, charts[0].PlotArea.Layout.Width, 1e-9)
+	assert.InDelta(t, 0.7, charts[0].PlotArea.Layout.Height, 1e-9)
+
+	assert.NoError(t, f2.Close())
+}
+
 func TestChartWithLogarithmicBase(t *testing.T) {
 	// Create test workbook with data
 	f := NewFile()

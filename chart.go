@@ -1310,6 +1310,524 @@ func (f *File) DeleteChart(sheet, cell string) error {
 	return err
 }
 
+// GetCharts provides a function to get all charts in a worksheet by given
+// worksheet name and cell reference. If the cell has no charts, it will return
+// an empty slice.
+func (f *File) GetCharts(sheet, cell string) ([]*Chart, error) {
+	col, row, err := CellNameToCoordinates(cell)
+	if err != nil {
+		return nil, err
+	}
+	col--
+	row--
+	ws, err := f.workSheetReader(sheet)
+	if err != nil {
+		return nil, err
+	}
+	if ws.Drawing == nil {
+		return nil, nil
+	}
+	target := f.getSheetRelationshipsTargetByID(sheet, ws.Drawing.RID)
+	drawingXML := strings.TrimPrefix(strings.ReplaceAll(target, "..", "xl"), "/")
+	drawingRelationships := strings.ReplaceAll(
+		strings.ReplaceAll(drawingXML, "xl/drawings", "xl/drawings/_rels"), ".xml", ".xml.rels")
+
+	wsDr, _, err := f.drawingParser(drawingXML)
+	if err != nil {
+		return nil, err
+	}
+
+	var charts []*Chart
+	matchAnchor := func(anchors []*xdrCellAnchor) error {
+		for _, anchor := range anchors {
+			if anchor.Pic != nil {
+				continue
+			}
+			// Parse the graphic frame innerxml to get From/To and chart reference.
+			// We must supply namespace declarations that were on the parent element.
+			wrappedXML := `<decodeCellAnchor xmlns:xdr="` + NameSpaceDrawingMLSpreadSheet.Value +
+				`" xmlns:a="` + NameSpaceDrawingML.Value + `">` + anchor.GraphicFrame + `</decodeCellAnchor>`
+			deCellAnchor := new(decodeCellAnchor)
+			if err = f.xmlNewDecoder(strings.NewReader(wrappedXML)).
+				Decode(deCellAnchor); err != nil {
+				return err
+			}
+			from := anchor.From
+			if from == nil && deCellAnchor.From != nil {
+				from = &xlsxFrom{Col: deCellAnchor.From.Col, Row: deCellAnchor.From.Row}
+			}
+			if from == nil || from.Col != col || from.Row != row {
+				continue
+			}
+			if deCellAnchor.GraphicFrame == nil || deCellAnchor.GraphicFrame.Graphic == nil ||
+				deCellAnchor.GraphicFrame.Graphic.GraphicData.Chart == nil {
+				continue
+			}
+			rID := deCellAnchor.GraphicFrame.Graphic.GraphicData.Chart.RID
+			rel := f.getDrawingRelationships(drawingRelationships, rID)
+			if rel == nil {
+				continue
+			}
+			chartPath := strings.ReplaceAll(rel.Target, "..", "xl")
+			parsed, err := f.parseChartXML(chartPath)
+			if err != nil {
+				return err
+			}
+			charts = append(charts, parsed...)
+		}
+		return nil
+	}
+	if err = matchAnchor(wsDr.OneCellAnchor); err != nil {
+		return nil, err
+	}
+	if err = matchAnchor(wsDr.TwoCellAnchor); err != nil {
+		return nil, err
+	}
+	return charts, nil
+}
+
+// parseChartXML parses a chart XML file and returns the chart configuration.
+func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
+	content, ok := f.Pkg.Load(chartPath)
+	if !ok {
+		return nil, nil
+	}
+	xmlData := content.([]byte)
+	var cs xlsxChartSpace
+	if err := xml.Unmarshal(xmlData, &cs); err != nil {
+		return nil, err
+	}
+	pa := cs.Chart.PlotArea
+	if pa == nil {
+		return nil, nil
+	}
+	titleRuns := extractTitleRunsFromXML(xmlData)
+	var charts []*Chart
+	type chartEntry struct {
+		charts []*cCharts
+		xmlTag string
+	}
+	entries := []chartEntry{
+		{pa.AreaChart, "areaChart"},
+		{pa.Area3DChart, "area3DChart"},
+		{pa.BarChart, "barChart"},
+		{pa.Bar3DChart, "bar3DChart"},
+		{pa.BubbleChart, "bubbleChart"},
+		{pa.DoughnutChart, "doughnutChart"},
+		{pa.LineChart, "lineChart"},
+		{pa.Line3DChart, "line3DChart"},
+		{pa.StockChart, "stockChart"},
+		{pa.PieChart, "pieChart"},
+		{pa.Pie3DChart, "pie3DChart"},
+		{pa.OfPieChart, "ofPieChart"},
+		{pa.RadarChart, "radarChart"},
+		{pa.ScatterChart, "scatterChart"},
+		{pa.Surface3DChart, "surface3DChart"},
+		{pa.SurfaceChart, "surfaceChart"},
+	}
+	for _, entry := range entries {
+		for _, c := range entry.charts {
+			chartType := f.detectChartType(entry.xmlTag, c)
+			chart := &Chart{
+				Type:   chartType,
+				Series: f.extractSeries(c),
+				Legend: ChartLegend{
+					Position: parseChartLegendPosition(cs.Chart.Legend),
+					Layout:   parseChartLayout(getLegendLayout(cs.Chart.Legend)),
+				},
+				Title:       titleRuns,
+				TitleLayout: parseChartLayout(getTitleLayout(cs.Chart.Title)),
+				PlotArea: ChartPlotArea{
+					Layout: parseChartLayout(pa.Layout),
+				},
+			}
+			if c.VaryColors != nil && c.VaryColors.Val != nil {
+				chart.VaryColors = c.VaryColors.Val
+			}
+			if c.HoleSize != nil && c.HoleSize.Val != nil {
+				chart.HoleSize = *c.HoleSize.Val
+			}
+			if c.GapWidth != nil && c.GapWidth.Val != nil {
+				chart.GapWidth = uintPtr(uint(*c.GapWidth.Val))
+			}
+			if c.Overlap != nil && c.Overlap.Val != nil {
+				chart.Overlap = c.Overlap.Val
+			}
+			if c.BubbleScale != nil && c.BubbleScale.Val != nil {
+				chart.BubbleSize = int(*c.BubbleScale.Val)
+			}
+			f.extractPlotAreaOpts(c, &chart.PlotArea)
+			charts = append(charts, chart)
+		}
+	}
+	return charts, nil
+}
+
+// detectChartType detects the ChartType from cPlotArea chart element fields.
+func (f *File) detectChartType(xmlTag string, c *cCharts) ChartType {
+	barDir := ""
+	if c.BarDir != nil && c.BarDir.Val != nil {
+		barDir = *c.BarDir.Val
+	}
+	grouping := ""
+	if c.Grouping != nil && c.Grouping.Val != nil {
+		grouping = *c.Grouping.Val
+	}
+	shape := ""
+	if c.Shape != nil && c.Shape.Val != nil {
+		shape = *c.Shape.Val
+	}
+	wireframe := false
+	if c.Wireframe != nil && c.Wireframe.Val != nil {
+		wireframe = *c.Wireframe.Val
+	}
+	ofPieType := ""
+	if c.OfPieType != nil && c.OfPieType.Val != nil {
+		ofPieType = *c.OfPieType.Val
+	}
+	hasUpDownBars := c.UpDownBars != nil
+
+	switch xmlTag {
+	case "areaChart":
+		switch grouping {
+		case "stacked":
+			return AreaStacked
+		case "percentStacked":
+			return AreaPercentStacked
+		default:
+			return Area
+		}
+	case "area3DChart":
+		switch grouping {
+		case "stacked":
+			return Area3DStacked
+		case "percentStacked":
+			return Area3DPercentStacked
+		default:
+			return Area3D
+		}
+	case "barChart":
+		if barDir == "bar" {
+			switch grouping {
+			case "stacked":
+				return BarStacked
+			case "percentStacked":
+				return BarPercentStacked
+			default:
+				return Bar
+			}
+		}
+		switch grouping {
+		case "stacked":
+			return ColStacked
+		case "percentStacked":
+			return ColPercentStacked
+		default:
+			return Col
+		}
+	case "bar3DChart":
+		isBar := barDir == "bar"
+		switch shape {
+		case "cone":
+			if isBar {
+				switch grouping {
+				case "stacked":
+					return Bar3DConeStacked
+				case "percentStacked":
+					return Bar3DConePercentStacked
+				default:
+					return Bar3DConeClustered
+				}
+			}
+			switch grouping {
+			case "stacked":
+				return Col3DConeStacked
+			case "percentStacked":
+				return Col3DConePercentStacked
+			case "clustered":
+				return Col3DConeClustered
+			default:
+				return Col3DCone
+			}
+		case "pyramid":
+			if isBar {
+				switch grouping {
+				case "stacked":
+					return Bar3DPyramidStacked
+				case "percentStacked":
+					return Bar3DPyramidPercentStacked
+				default:
+					return Bar3DPyramidClustered
+				}
+			}
+			switch grouping {
+			case "stacked":
+				return Col3DPyramidStacked
+			case "percentStacked":
+				return Col3DPyramidPercentStacked
+			case "clustered":
+				return Col3DPyramidClustered
+			default:
+				return Col3DPyramid
+			}
+		case "cylinder":
+			if isBar {
+				switch grouping {
+				case "stacked":
+					return Bar3DCylinderStacked
+				case "percentStacked":
+					return Bar3DCylinderPercentStacked
+				default:
+					return Bar3DCylinderClustered
+				}
+			}
+			switch grouping {
+			case "stacked":
+				return Col3DCylinderStacked
+			case "percentStacked":
+				return Col3DCylinderPercentStacked
+			case "clustered":
+				return Col3DCylinderClustered
+			default:
+				return Col3DCylinder
+			}
+		default:
+			if isBar {
+				switch grouping {
+				case "stacked":
+					return Bar3DStacked
+				case "percentStacked":
+					return Bar3DPercentStacked
+				default:
+					return Bar3DClustered
+				}
+			}
+			switch grouping {
+			case "stacked":
+				return Col3DStacked
+			case "percentStacked":
+				return Col3DPercentStacked
+			case "clustered":
+				return Col3DClustered
+			default:
+				return Col3D
+			}
+		}
+	case "lineChart":
+		return Line
+	case "line3DChart":
+		return Line3D
+	case "pieChart":
+		return Pie
+	case "pie3DChart":
+		return Pie3D
+	case "ofPieChart":
+		if ofPieType == "bar" {
+			return BarOfPie
+		}
+		return PieOfPie
+	case "doughnutChart":
+		return Doughnut
+	case "radarChart":
+		return Radar
+	case "scatterChart":
+		return Scatter
+	case "bubbleChart":
+		bubble3D := false
+		if c.Ser != nil {
+			for _, s := range *c.Ser {
+				if s.Bubble3D != nil && s.Bubble3D.Val != nil && *s.Bubble3D.Val {
+					bubble3D = true
+					break
+				}
+			}
+		}
+		if bubble3D {
+			return Bubble3D
+		}
+		return Bubble
+	case "surface3DChart":
+		if wireframe {
+			return WireframeSurface3D
+		}
+		return Surface3D
+	case "surfaceChart":
+		if wireframe {
+			return WireframeContour
+		}
+		return Contour
+	case "stockChart":
+		if hasUpDownBars {
+			return StockOpenHighLowClose
+		}
+		return StockHighLowClose
+	}
+	return Col
+}
+
+// extractSeries extracts chart series from cCharts.
+func (f *File) extractSeries(c *cCharts) []ChartSeries {
+	if c.Ser == nil {
+		return nil
+	}
+	var series []ChartSeries
+	for _, s := range *c.Ser {
+		cs := ChartSeries{}
+		if s.Tx != nil && s.Tx.StrRef != nil {
+			cs.Name = s.Tx.StrRef.F
+		}
+		if s.Cat != nil && s.Cat.StrRef != nil {
+			cs.Categories = s.Cat.StrRef.F
+		}
+		if s.Val != nil && s.Val.NumRef != nil {
+			cs.Values = s.Val.NumRef.F
+		}
+		if s.XVal != nil && s.XVal.StrRef != nil {
+			cs.Categories = s.XVal.StrRef.F
+		}
+		if s.YVal != nil && s.YVal.NumRef != nil {
+			cs.Values = s.YVal.NumRef.F
+		}
+		if s.BubbleSize != nil && s.BubbleSize.NumRef != nil {
+			cs.Sizes = s.BubbleSize.NumRef.F
+		}
+		series = append(series, cs)
+	}
+	return series
+}
+
+// extractPlotAreaOpts extracts plot area options from chart data.
+func (f *File) extractPlotAreaOpts(c *cCharts, pa *ChartPlotArea) {
+	if c.DLbls == nil {
+		return
+	}
+	if c.DLbls.ShowVal != nil && c.DLbls.ShowVal.Val != nil {
+		pa.ShowVal = *c.DLbls.ShowVal.Val
+	}
+	if c.DLbls.ShowCatName != nil && c.DLbls.ShowCatName.Val != nil {
+		pa.ShowCatName = *c.DLbls.ShowCatName.Val
+	}
+	if c.DLbls.ShowSerName != nil && c.DLbls.ShowSerName.Val != nil {
+		pa.ShowSerName = *c.DLbls.ShowSerName.Val
+	}
+	if c.DLbls.ShowPercent != nil && c.DLbls.ShowPercent.Val != nil {
+		pa.ShowPercent = *c.DLbls.ShowPercent.Val
+	}
+	if c.DLbls.ShowBubbleSize != nil && c.DLbls.ShowBubbleSize.Val != nil {
+		pa.ShowBubbleSize = *c.DLbls.ShowBubbleSize.Val
+	}
+	if c.DLbls.ShowLeaderLines != nil && c.DLbls.ShowLeaderLines.Val != nil {
+		pa.ShowLeaderLines = *c.DLbls.ShowLeaderLines.Val
+	}
+}
+
+// parseChartLegendPosition returns the legend position string from cLegend.
+func parseChartLegendPosition(legend *cLegend) string {
+	if legend == nil {
+		return "none"
+	}
+	if legend.LegendPos == nil || legend.LegendPos.Val == nil {
+		return "right"
+	}
+	revLegendPos := map[string]string{
+		"b":  "bottom",
+		"l":  "left",
+		"r":  "right",
+		"t":  "top",
+		"tr": "top_right",
+	}
+	if pos, ok := revLegendPos[*legend.LegendPos.Val]; ok {
+		return pos
+	}
+	return "right"
+}
+
+// getLegendLayout returns the layout from a cLegend, or nil.
+func getLegendLayout(legend *cLegend) *cLayout {
+	if legend == nil {
+		return nil
+	}
+	return legend.Layout
+}
+
+// getTitleLayout returns the layout from a cTitle, or nil.
+func getTitleLayout(title *cTitle) *cLayout {
+	if title == nil {
+		return nil
+	}
+	return title.Layout
+}
+
+// parseChartLayout converts a cLayout XML structure to a ChartLayout.
+func parseChartLayout(layout *cLayout) *ChartLayout {
+	if layout == nil || layout.ManualLayout == nil {
+		return nil
+	}
+	ml := layout.ManualLayout
+	cl := &ChartLayout{}
+	if ml.X != nil && ml.X.Val != nil {
+		cl.X = *ml.X.Val
+	}
+	if ml.Y != nil && ml.Y.Val != nil {
+		cl.Y = *ml.Y.Val
+	}
+	if ml.W != nil && ml.W.Val != nil {
+		cl.Width = *ml.W.Val
+	}
+	if ml.H != nil && ml.H.Val != nil {
+		cl.Height = *ml.H.Val
+	}
+	return cl
+}
+
+// decodeChartTitle is used for deserializing chart titles with proper namespace
+// handling (the cRich/aP/aR structs use "a:" prefix tags which only work for
+// marshaling, not unmarshaling).
+type decodeChartTitle struct {
+	XMLName xml.Name `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chartSpace"`
+	Chart   struct {
+		Title *decodeRichTitle `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart title"`
+	} `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chart"`
+}
+
+type decodeRichTitle struct {
+	Tx struct {
+		Rich *decodeRich `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart rich"`
+	} `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart tx"`
+}
+
+type decodeRich struct {
+	P []decodeRichP `xml:"http://schemas.openxmlformats.org/drawingml/2006/main p"`
+}
+
+type decodeRichP struct {
+	R *decodeRichR `xml:"http://schemas.openxmlformats.org/drawingml/2006/main r"`
+}
+
+type decodeRichR struct {
+	T string `xml:"http://schemas.openxmlformats.org/drawingml/2006/main t"`
+}
+
+// extractTitleRunsFromXML extracts rich text runs from chart XML bytes.
+func extractTitleRunsFromXML(xmlData []byte) []RichTextRun {
+	var dt decodeChartTitle
+	if err := xml.Unmarshal(xmlData, &dt); err != nil || dt.Chart.Title == nil {
+		return nil
+	}
+	rich := dt.Chart.Title.Tx.Rich
+	if rich == nil {
+		return nil
+	}
+	var runs []RichTextRun
+	for _, p := range rich.P {
+		if p.R == nil {
+			continue
+		}
+		runs = append(runs, RichTextRun{Text: p.R.T})
+	}
+	return runs
+}
+
 // countCharts provides a function to get chart files count storage in the
 // folder xl/charts.
 func (f *File) countCharts() int {

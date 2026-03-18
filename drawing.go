@@ -162,6 +162,10 @@ func (f *File) addChart(opts *Chart, comboCharts []*Chart) {
 		StockHighLowClose:           f.drawStockChart,
 		StockOpenHighLowClose:       f.drawStockChart,
 	}
+	if xlsxChartSpace.Chart.Title != nil {
+		xlsxChartSpace.Chart.Title.Layout = drawChartLayout(opts.TitleLayout)
+	}
+	xlsxChartSpace.Chart.PlotArea.Layout = drawChartLayout(opts.PlotArea.Layout)
 	xlsxChartSpace.Chart.drawChartLegend(opts)
 	xlsxChartSpace.Chart.PlotArea.SpPr = f.drawShapeFill(opts.PlotArea.Fill, xlsxChartSpace.Chart.PlotArea.SpPr)
 	xlsxChartSpace.Chart.PlotArea.DTable = f.drawPlotAreaDTable(opts)
@@ -1277,6 +1281,23 @@ func (f *File) drawPlotAreaTitles(runs []RichTextRun, vert string) *cTitle {
 	return title
 }
 
+// drawChartLayout converts a ChartLayout to a cLayout XML structure.
+func drawChartLayout(layout *ChartLayout) *cLayout {
+	if layout == nil {
+		return nil
+	}
+	return &cLayout{
+		ManualLayout: &cManualLayout{
+			XMode: &attrValString{Val: stringPtr("edge")},
+			YMode: &attrValString{Val: stringPtr("edge")},
+			X:     &attrValFloat{Val: float64Ptr(layout.X)},
+			Y:     &attrValFloat{Val: float64Ptr(layout.Y)},
+			W:     &attrValFloat{Val: float64Ptr(layout.Width)},
+			H:     &attrValFloat{Val: float64Ptr(layout.Height)},
+		},
+	}
+}
+
 // drawPlotAreaDTable provides a function to draw the c:dTable element.
 func (f *File) drawPlotAreaDTable(opts *Chart) *cDTable {
 	if _, ok := plotAreaChartGrouping[opts.Type]; ok && opts.PlotArea.ShowDataTable {
@@ -1401,6 +1422,7 @@ func (c *cChart) drawChartLegend(opts *Chart) {
 	}
 	if c.Legend == nil {
 		c.Legend = &cLegend{
+			Layout:    drawChartLayout(opts.Legend.Layout),
 			LegendPos: &attrValString{Val: stringPtr(chartLegendPosition[opts.Legend.Position])},
 			Overlay:   &attrValBool{Val: boolPtr(false)},
 		}

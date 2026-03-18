@@ -23,6 +23,7 @@ type decodeCellAnchor struct {
 	To               *decodeTo               `xml:"to"`
 	Ext              *decodePositiveSize2D   `xml:"ext"`
 	Sp               *decodeSp               `xml:"sp"`
+	GraphicFrame     *decodeGraphicFrame     `xml:"graphicFrame"`
 	Pic              *decodePic              `xml:"pic"`
 	ClientData       *decodeClientData       `xml:"clientData"`
 	AlternateContent []*xlsxAlternateContent `xml:"AlternateContent"`
@@ -61,6 +62,25 @@ type decodeChoice struct {
 type decodeGraphicFrame struct {
 	Macro            string                 `xml:"macro,attr"`
 	NvGraphicFramePr decodeNvGraphicFramePr `xml:"nvGraphicFramePr"`
+	Graphic          *decodeGraphic         `xml:"http://schemas.openxmlformats.org/drawingml/2006/main graphic"`
+}
+
+// decodeGraphic defines the structure used to deserialize the a:graphic element.
+type decodeGraphic struct {
+	GraphicData decodeGraphicData `xml:"http://schemas.openxmlformats.org/drawingml/2006/main graphicData"`
+}
+
+// decodeGraphicData defines the structure used to deserialize the
+// a:graphicData element.
+type decodeGraphicData struct {
+	URI   string       `xml:"uri,attr"`
+	Chart *decodeChart `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chart"`
+}
+
+// decodeChart defines the structure used to deserialize the c:chart element
+// reference in a graphic frame.
+type decodeChart struct {
+	RID string `xml:"http://schemas.openxmlformats.org/officeDocument/2006/relationships id,attr"`
 }
 
 // decodeNvGraphicFramePr defines the structure used to deserialize the
