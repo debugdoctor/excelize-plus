@@ -617,12 +617,26 @@ type ChartNumFmt struct {
 	SourceLinked bool
 }
 
+// ChartTickMarkType is the type of supported chart tick mark types.
+type ChartTickMarkType byte
+
+// This section defines the supported chart tick mark types enumeration.
+const (
+	ChartTickMarkNone ChartTickMarkType = iota
+	ChartTickMarkInside
+	ChartTickMarkOutside
+	ChartTickMarkCross
+)
+
 // ChartAxis directly maps the format settings of the chart axis.
 type ChartAxis struct {
 	None              bool
 	MajorGridLines    bool
 	MinorGridLines    bool
 	MajorUnit         float64
+	MinorUnit         float64
+	MajorTickMark     ChartTickMarkType
+	MinorTickMark     ChartTickMarkType
 	TickLabelPosition ChartTickLabelPositionType
 	TickLabelSkip     int
 	ReverseOrder      bool
@@ -676,35 +690,67 @@ type ChartPlotArea struct {
 	NumFmt            ChartNumFmt
 }
 
+// ChartPosition directly maps the position of a chart anchor in the worksheet.
+type ChartPosition struct {
+	FromCol    int
+	FromColOff int
+	FromRow    int
+	FromRowOff int
+	ToCol      int
+	ToColOff   int
+	ToRow      int
+	ToRowOff   int
+}
+
+// ChartView3D directly maps the 3D view settings of the chart.
+type ChartView3D struct {
+	RotX         *int
+	RotY         *int
+	DepthPercent *int
+	Perspective  *int
+	RAngAx       *int
+}
+
 // Chart directly maps the format settings of the chart.
 type Chart struct {
-	Type         ChartType
-	Series       []ChartSeries
-	Format       GraphicOptions
-	Dimension    ChartDimension
-	Legend       ChartLegend
-	Title        []RichTextRun
-	TitleLayout  *ChartLayout
-	VaryColors   *bool
-	XAxis        ChartAxis
-	YAxis        ChartAxis
-	PlotArea     ChartPlotArea
-	Fill         Fill
-	Border       ChartLine
-	ShowBlanksAs string
-	BubbleSize   int
-	HoleSize     int
-	GapWidth     *uint
-	Overlap      *int
-	order        int
+	Type             ChartType
+	Series           []ChartSeries
+	Format           GraphicOptions
+	Dimension        ChartDimension
+	Position         *ChartPosition
+	Legend           ChartLegend
+	Title            []RichTextRun
+	TitleOverlay     *bool
+	TitleFill        Fill
+	TitleBorder      ChartLine
+	TitleLayout      *ChartLayout
+	AutoTitleDeleted *bool
+	VaryColors       *bool
+	View3D           *ChartView3D
+	XAxis            ChartAxis
+	YAxis            ChartAxis
+	PlotArea         ChartPlotArea
+	Fill             Fill
+	Border           ChartLine
+	PlotVisOnly      *bool
+	ShowBlanksAs     string
+	ShowDLblsOverMax *bool
+	BubbleSize       int
+	HoleSize         int
+	GapWidth         *uint
+	Overlap          *int
+	order            int
 }
 
 // ChartLegend directly maps the format settings of the chart legend.
 type ChartLegend struct {
 	Position      string
 	ShowLegendKey bool
+	Overlay       *bool
 	Layout        *ChartLayout
 	Font          *Font
+	Fill          Fill
+	Border        ChartLine
 }
 
 // ChartMarker directly maps the format settings of the chart marker.

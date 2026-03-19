@@ -569,6 +569,12 @@ var (
 		Contour:          "none",
 		WireframeContour: "none",
 	}
+	chartTickMarkTypes = map[ChartTickMarkType]string{
+		ChartTickMarkNone:    "none",
+		ChartTickMarkInside:  "in",
+		ChartTickMarkOutside: "out",
+		ChartTickMarkCross:   "cross",
+	}
 )
 
 // parseChartOptions provides a function to parse the format settings of the
@@ -1359,7 +1365,7 @@ func (f *File) GetCharts(sheet, cell string) ([]*Chart, error) {
 			}
 			from := anchor.From
 			if from == nil && deCellAnchor.From != nil {
-				from = &xlsxFrom{Col: deCellAnchor.From.Col, Row: deCellAnchor.From.Row}
+				from = &xlsxFrom{Col: deCellAnchor.From.Col, ColOff: deCellAnchor.From.ColOff, Row: deCellAnchor.From.Row, RowOff: deCellAnchor.From.RowOff}
 			}
 			if filterByCell && (from == nil || from.Col != col || from.Row != row) {
 				continue
@@ -1377,6 +1383,29 @@ func (f *File) GetCharts(sheet, cell string) ([]*Chart, error) {
 			parsed, err := f.parseChartXML(chartPath)
 			if err != nil {
 				return err
+			}
+			// Build chart position from anchor From/To
+			var pos *ChartPosition
+			if from != nil {
+				pos = &ChartPosition{
+					FromCol:    from.Col,
+					FromColOff: from.ColOff,
+					FromRow:    from.Row,
+					FromRowOff: from.RowOff,
+				}
+			}
+			to := anchor.To
+			if to == nil && deCellAnchor.To != nil {
+				to = &xlsxTo{Col: deCellAnchor.To.Col, ColOff: deCellAnchor.To.ColOff, Row: deCellAnchor.To.Row, RowOff: deCellAnchor.To.RowOff}
+			}
+			if pos != nil && to != nil {
+				pos.ToCol = to.Col
+				pos.ToColOff = to.ColOff
+				pos.ToRow = to.Row
+				pos.ToRowOff = to.RowOff
+			}
+			for _, c := range parsed {
+				c.Position = pos
 			}
 			charts = append(charts, parsed...)
 		}
@@ -1406,8 +1435,8 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 	if pa == nil {
 		return nil, nil
 	}
-	titleRuns := extractTitleRunsFromXML(xmlData)
 	nsCS := parseNsChartSpace(xmlData)
+	titleRuns := extractTitleRunsFromNsTitle(nsCS.Chart.Title)
 	var charts []*Chart
 	type chartEntry struct {
 		charts []*cCharts
@@ -1440,6 +1469,7 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 				Legend: ChartLegend{
 					Position:      parseChartLegendPosition(cs.Chart.Legend),
 					ShowLegendKey: extractShowLegendKey(c),
+					Overlay:       extractLegendOverlay(cs.Chart.Legend),
 					Layout:        parseChartLayout(getLegendLayout(cs.Chart.Legend)),
 				},
 				Title:       titleRuns,
@@ -1447,6 +1477,49 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 				PlotArea: ChartPlotArea{
 					Layout: parseChartLayout(pa.Layout),
 				},
+			}
+			// Extract AutoTitleDeleted
+			if cs.Chart.AutoTitleDeleted != nil {
+				chart.AutoTitleDeleted = boolPtr(cs.Chart.AutoTitleDeleted.Val)
+			}
+			// Extract title overlay
+			if cs.Chart.Title != nil && cs.Chart.Title.Overlay != nil && cs.Chart.Title.Overlay.Val != nil {
+				chart.TitleOverlay = cs.Chart.Title.Overlay.Val
+			}
+			// Extract title fill and border from namespace-aware structs
+			if nsCS != nil && nsCS.Chart.Title != nil && nsCS.Chart.Title.SpPr != nil {
+				chart.TitleFill = extractNsFill(nsCS.Chart.Title.SpPr)
+				if nsCS.Chart.Title.SpPr.Ln != nil {
+					chart.TitleBorder = extractNsLine(nsCS.Chart.Title.SpPr.Ln)
+				}
+			}
+			// Extract View3D
+			if cs.Chart.View3D != nil {
+				v3d := &ChartView3D{}
+				if cs.Chart.View3D.RotX != nil && cs.Chart.View3D.RotX.Val != nil {
+					v3d.RotX = cs.Chart.View3D.RotX.Val
+				}
+				if cs.Chart.View3D.RotY != nil && cs.Chart.View3D.RotY.Val != nil {
+					v3d.RotY = cs.Chart.View3D.RotY.Val
+				}
+				if cs.Chart.View3D.DepthPercent != nil && cs.Chart.View3D.DepthPercent.Val != nil {
+					v3d.DepthPercent = cs.Chart.View3D.DepthPercent.Val
+				}
+				if cs.Chart.View3D.Perspective != nil && cs.Chart.View3D.Perspective.Val != nil {
+					v3d.Perspective = cs.Chart.View3D.Perspective.Val
+				}
+				if cs.Chart.View3D.RAngAx != nil && cs.Chart.View3D.RAngAx.Val != nil {
+					v3d.RAngAx = cs.Chart.View3D.RAngAx.Val
+				}
+				chart.View3D = v3d
+			}
+			// Extract PlotVisOnly
+			if cs.Chart.PlotVisOnly != nil && cs.Chart.PlotVisOnly.Val != nil {
+				chart.PlotVisOnly = cs.Chart.PlotVisOnly.Val
+			}
+			// Extract ShowDLblsOverMax
+			if cs.Chart.ShowDLblsOverMax != nil && cs.Chart.ShowDLblsOverMax.Val != nil {
+				chart.ShowDLblsOverMax = cs.Chart.ShowDLblsOverMax.Val
 			}
 			if c.VaryColors != nil && c.VaryColors.Val != nil {
 				chart.VaryColors = c.VaryColors.Val
@@ -1473,7 +1546,7 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 				chart.ShowBlanksAs = *cs.Chart.DispBlanksAs.Val
 			}
 			f.extractAxes(pa, chart)
-			// Apply namespace-aware SpPr data and axis titles
+			// Apply namespace-aware SpPr data, axis titles, axis fonts, and legend font
 			if nsCS != nil {
 				nsCharts := getNsCharts(nsCS.Chart.PlotArea, entry.xmlTag)
 				if len(nsCharts) > 0 {
@@ -1489,6 +1562,17 @@ func (f *File) parseChartXML(chartPath string) ([]*Chart, error) {
 					}
 				}
 				extractNsAxesTitles(nsCS.Chart.PlotArea, chart)
+				extractNsAxesFonts(nsCS.Chart.PlotArea, chart)
+				// Extract legend font, fill, border
+				if nsCS.Chart.Legend != nil {
+					chart.Legend.Font = extractNsTxPrFont(nsCS.Chart.Legend.TxPr)
+					if nsCS.Chart.Legend.SpPr != nil {
+						chart.Legend.Fill = extractNsFill(nsCS.Chart.Legend.SpPr)
+						if nsCS.Chart.Legend.SpPr.Ln != nil {
+							chart.Legend.Border = extractNsLine(nsCS.Chart.Legend.SpPr.Ln)
+						}
+					}
+				}
 			}
 			charts = append(charts, chart)
 		}
@@ -1793,6 +1877,9 @@ func applyNsChartData(nsCharts *decodeNsCharts, chart *Chart) {
 			if nsSer.DLbls.SpPr != nil {
 				chart.Series[i].DataLabel.Fill = extractNsFill(nsSer.DLbls.SpPr)
 			}
+			if f := extractNsTxPrFont(nsSer.DLbls.TxPr); f != nil {
+				chart.Series[i].DataLabel.Font = *f
+			}
 		}
 	}
 	// Apply up/down bars
@@ -1920,6 +2007,40 @@ func extractNsAxesTitles(nsPa *decodeNsPlotArea, chart *Chart) {
 	}
 }
 
+// extractNsAxesFonts extracts axis label fonts and alignment using namespace-aware TxPr.
+func extractNsAxesFonts(nsPa *decodeNsPlotArea, chart *Chart) {
+	if nsPa == nil {
+		return
+	}
+	applyTxPr := func(txPr *decodeNsTxPr, axis *ChartAxis) {
+		if txPr == nil {
+			return
+		}
+		if f := extractNsTxPrFont(txPr); f != nil {
+			axis.Font = *f
+		}
+		if txPr.BodyPr != nil {
+			if txPr.BodyPr.Rot != 0 {
+				axis.Alignment.TextRotation = txPr.BodyPr.Rot / 60000
+			}
+			if txPr.BodyPr.Vert != "" && txPr.BodyPr.Vert != "horz" {
+				axis.Alignment.Vertical = txPr.BodyPr.Vert
+			}
+		}
+	}
+	// CatAx / DateAx → XAxis
+	if len(nsPa.CatAx) > 0 {
+		applyTxPr(nsPa.CatAx[0].TxPr, &chart.XAxis)
+	}
+	if len(nsPa.DateAx) > 0 {
+		applyTxPr(nsPa.DateAx[0].TxPr, &chart.XAxis)
+	}
+	// ValAx → YAxis
+	if len(nsPa.ValAx) > 0 {
+		applyTxPr(nsPa.ValAx[0].TxPr, &chart.YAxis)
+	}
+}
+
 // extractNsRichTitle extracts []RichTextRun from a decodeRichTitle.
 func extractNsRichTitle(dt *decodeRichTitle) []RichTextRun {
 	if dt == nil || dt.Tx.Rich == nil {
@@ -1955,6 +2076,15 @@ func (f *File) extractAxisOpts(ax *cAxs, axis *ChartAxis) {
 	}
 	if ax.MajorUnit != nil && ax.MajorUnit.Val != nil {
 		axis.MajorUnit = *ax.MajorUnit.Val
+	}
+	if ax.MinorUnit != nil && ax.MinorUnit.Val != nil {
+		axis.MinorUnit = *ax.MinorUnit.Val
+	}
+	if ax.MajorTickMark != nil && ax.MajorTickMark.Val != nil {
+		axis.MajorTickMark = reverseTickMarkType(*ax.MajorTickMark.Val)
+	}
+	if ax.MinorTickMark != nil && ax.MinorTickMark.Val != nil {
+		axis.MinorTickMark = reverseTickMarkType(*ax.MinorTickMark.Val)
 	}
 	if ax.TickLblPos != nil && ax.TickLblPos.Val != nil {
 		axis.TickLabelPosition = reverseTickLabelPosition(*ax.TickLblPos.Val)
@@ -1998,6 +2128,20 @@ func reverseTickLabelPosition(s string) ChartTickLabelPositionType {
 	return ChartTickLabelNextToAxis
 }
 
+// reverseTickMarkType converts XML tick mark type string to ChartTickMarkType.
+func reverseTickMarkType(s string) ChartTickMarkType {
+	revTick := map[string]ChartTickMarkType{
+		"none":    ChartTickMarkNone,
+		"in":      ChartTickMarkInside,
+		"out":     ChartTickMarkOutside,
+		"cross":   ChartTickMarkCross,
+	}
+	if t, ok := revTick[s]; ok {
+		return t
+	}
+	return ChartTickMarkNone
+}
+
 // parseChartLegendPosition returns the legend position string from cLegend.
 func parseChartLegendPosition(legend *cLegend) string {
 	if legend == nil {
@@ -2025,6 +2169,14 @@ func getLegendLayout(legend *cLegend) *cLayout {
 		return nil
 	}
 	return legend.Layout
+}
+
+// extractLegendOverlay returns the overlay value from a cLegend.
+func extractLegendOverlay(legend *cLegend) *bool {
+	if legend == nil || legend.Overlay == nil || legend.Overlay.Val == nil {
+		return nil
+	}
+	return legend.Overlay.Val
 }
 
 // getTitleLayout returns the layout from a cTitle, or nil.
@@ -2160,6 +2312,7 @@ type decodeNsMarker struct {
 type decodeNsDLbls struct {
 	NumFmt  *cNumFmt       `xml:"numFmt"`
 	SpPr    *decodeNsSpPr  `xml:"spPr"`
+	TxPr    *decodeNsTxPr  `xml:"txPr"`
 	DLblPos *attrValString `xml:"dLblPos"`
 }
 
@@ -2179,9 +2332,35 @@ type decodeNsChartLines struct {
 	SpPr *decodeNsSpPr `xml:"spPr"`
 }
 
-// decodeNsAxs handles axis title extraction with proper namespace.
+// decodeNsTxPr handles text properties for font extraction.
+type decodeNsTxPr struct {
+	BodyPr *decodeNsBodyPr `xml:"http://schemas.openxmlformats.org/drawingml/2006/main bodyPr"`
+	P      []decodeNsTxPrP `xml:"http://schemas.openxmlformats.org/drawingml/2006/main p"`
+}
+
+type decodeNsBodyPr struct {
+	Rot  int    `xml:"rot,attr"`
+	Vert string `xml:"vert,attr,omitempty"`
+}
+
+type decodeNsTxPrP struct {
+	PPr *decodeNsTxPrPPr `xml:"http://schemas.openxmlformats.org/drawingml/2006/main pPr"`
+}
+
+type decodeNsTxPrPPr struct {
+	DefRPr *decodeNsRPr `xml:"http://schemas.openxmlformats.org/drawingml/2006/main defRPr"`
+}
+
+// decodeNsAxs handles axis title and TxPr extraction with proper namespace.
 type decodeNsAxs struct {
 	Title *decodeRichTitle `xml:"title"`
+	TxPr  *decodeNsTxPr   `xml:"txPr"`
+}
+
+// decodeNsLegend handles legend with TxPr and SpPr for font/fill/border extraction.
+type decodeNsLegend struct {
+	TxPr *decodeNsTxPr `xml:"txPr"`
+	SpPr *decodeNsSpPr `xml:"spPr"`
 }
 
 // decodeNsPlotArea for extracting SpPr from plot area elements.
@@ -2209,27 +2388,31 @@ type decodeNsPlotArea struct {
 	SpPr           *decodeNsSpPr    `xml:"spPr"`
 }
 
+// decodeNsTitleFull handles title with SpPr for fill/border extraction.
+type decodeNsTitleFull struct {
+	Tx   struct {
+		Rich *decodeRich `xml:"rich"`
+	} `xml:"tx"`
+	SpPr *decodeNsSpPr `xml:"spPr"`
+}
+
 type decodeNsChartSpace struct {
 	XMLName xml.Name `xml:"http://schemas.openxmlformats.org/drawingml/2006/chart chartSpace"`
 	Chart   struct {
-		Title    *decodeRichTitle  `xml:"title"`
-		PlotArea *decodeNsPlotArea `xml:"plotArea"`
+		Title    *decodeNsTitleFull `xml:"title"`
+		PlotArea *decodeNsPlotArea  `xml:"plotArea"`
+		Legend   *decodeNsLegend    `xml:"legend"`
 	} `xml:"chart"`
 	SpPr *decodeNsSpPr `xml:"spPr"`
 }
 
-// extractTitleRunsFromXML extracts rich text runs from chart XML bytes.
-func extractTitleRunsFromXML(xmlData []byte) []RichTextRun {
-	var dt decodeNsChartSpace
-	if err := xml.Unmarshal(xmlData, &dt); err != nil || dt.Chart.Title == nil {
-		return nil
-	}
-	rich := dt.Chart.Title.Tx.Rich
-	if rich == nil {
+// extractTitleRunsFromNsTitle extracts rich text runs from decodeNsTitleFull.
+func extractTitleRunsFromNsTitle(title *decodeNsTitleFull) []RichTextRun {
+	if title == nil || title.Tx.Rich == nil {
 		return nil
 	}
 	var runs []RichTextRun
-	for _, p := range rich.P {
+	for _, p := range title.Tx.Rich.P {
 		if p.R == nil {
 			continue
 		}
@@ -2271,6 +2454,19 @@ func extractNsRPrFont(rpr *decodeNsRPr) *Font {
 		return nil
 	}
 	return f
+}
+
+// extractNsTxPrFont extracts a Font from a decodeNsTxPr text properties struct.
+func extractNsTxPrFont(txPr *decodeNsTxPr) *Font {
+	if txPr == nil {
+		return nil
+	}
+	for _, p := range txPr.P {
+		if p.PPr != nil && p.PPr.DefRPr != nil {
+			return extractNsRPrFont(p.PPr.DefRPr)
+		}
+	}
+	return nil
 }
 
 // parseNsChartSpace parses chart XML with namespace-aware decode structs for

@@ -58,19 +58,49 @@ func (f *File) prepareChartSheetDrawing(cs *xlsxChartsheet, drawingID int, sheet
 // given format sets.
 func (f *File) addChart(opts *Chart, comboCharts []*Chart) {
 	count := f.countCharts()
+	// Build View3D: use user-provided values, falling back to type defaults
+	view3D := &cView3D{
+		RotX:        &attrValInt{Val: intPtr(chartView3DRotX[opts.Type])},
+		RotY:        &attrValInt{Val: intPtr(chartView3DRotY[opts.Type])},
+		Perspective: &attrValInt{Val: intPtr(chartView3DPerspective[opts.Type])},
+		RAngAx:      &attrValInt{Val: intPtr(chartView3DRAngAx[opts.Type])},
+	}
+	if opts.View3D != nil {
+		if opts.View3D.RotX != nil {
+			view3D.RotX = &attrValInt{Val: opts.View3D.RotX}
+		}
+		if opts.View3D.RotY != nil {
+			view3D.RotY = &attrValInt{Val: opts.View3D.RotY}
+		}
+		if opts.View3D.DepthPercent != nil {
+			view3D.DepthPercent = &attrValInt{Val: opts.View3D.DepthPercent}
+		}
+		if opts.View3D.Perspective != nil {
+			view3D.Perspective = &attrValInt{Val: opts.View3D.Perspective}
+		}
+		if opts.View3D.RAngAx != nil {
+			view3D.RAngAx = &attrValInt{Val: opts.View3D.RAngAx}
+		}
+	}
+	// PlotVisOnly: use user-provided value or default false
+	plotVisOnly := boolPtr(false)
+	if opts.PlotVisOnly != nil {
+		plotVisOnly = opts.PlotVisOnly
+	}
+	// ShowDLblsOverMax: use user-provided value or default false
+	showDLblsOverMax := boolPtr(false)
+	if opts.ShowDLblsOverMax != nil {
+		showDLblsOverMax = opts.ShowDLblsOverMax
+	}
 	xlsxChartSpace := xlsxChartSpace{
 		XMLNSa:         NameSpaceDrawingML.Value,
 		Date1904:       &attrValBool{Val: boolPtr(false)},
 		Lang:           &attrValString{Val: stringPtr("en-US")},
 		RoundedCorners: &attrValBool{Val: boolPtr(false)},
 		Chart: cChart{
-			Title: f.drawPlotAreaTitles(opts.Title, ""),
-			View3D: &cView3D{
-				RotX:        &attrValInt{Val: intPtr(chartView3DRotX[opts.Type])},
-				RotY:        &attrValInt{Val: intPtr(chartView3DRotY[opts.Type])},
-				Perspective: &attrValInt{Val: intPtr(chartView3DPerspective[opts.Type])},
-				RAngAx:      &attrValInt{Val: intPtr(chartView3DRAngAx[opts.Type])},
-			},
+			Title:            f.drawPlotAreaTitles(opts.Title, ""),
+			AutoTitleDeleted: f.drawAutoTitleDeleted(opts),
+			View3D:           view3D,
 			Floor: &cThicknessSpPr{
 				Thickness: &attrValInt{Val: intPtr(0)},
 			},
@@ -81,9 +111,9 @@ func (f *File) addChart(opts *Chart, comboCharts []*Chart) {
 				Thickness: &attrValInt{Val: intPtr(0)},
 			},
 			PlotArea:         &cPlotArea{},
-			PlotVisOnly:      &attrValBool{Val: boolPtr(false)},
+			PlotVisOnly:      &attrValBool{Val: plotVisOnly},
 			DispBlanksAs:     &attrValString{Val: stringPtr(opts.ShowBlanksAs)},
-			ShowDLblsOverMax: &attrValBool{Val: boolPtr(false)},
+			ShowDLblsOverMax: &attrValBool{Val: showDLblsOverMax},
 		},
 		SpPr: &cSpPr{
 			SolidFill: &aSolidFill{
@@ -164,9 +194,23 @@ func (f *File) addChart(opts *Chart, comboCharts []*Chart) {
 	}
 	if xlsxChartSpace.Chart.Title != nil {
 		xlsxChartSpace.Chart.Title.Layout = drawChartLayout(opts.TitleLayout)
+		if opts.TitleOverlay != nil {
+			xlsxChartSpace.Chart.Title.Overlay = &attrValBool{Val: opts.TitleOverlay}
+		}
+		xlsxChartSpace.Chart.Title.SpPr = f.drawTitleSpPr(opts)
 	}
 	xlsxChartSpace.Chart.PlotArea.Layout = drawChartLayout(opts.PlotArea.Layout)
 	xlsxChartSpace.Chart.drawChartLegend(opts)
+	// Apply legend fill and border
+	if xlsxChartSpace.Chart.Legend != nil {
+		xlsxChartSpace.Chart.Legend.SpPr = f.drawShapeFill(opts.Legend.Fill, xlsxChartSpace.Chart.Legend.SpPr)
+		if opts.Legend.Border.Type != ChartLineUnset {
+			if xlsxChartSpace.Chart.Legend.SpPr == nil {
+				xlsxChartSpace.Chart.Legend.SpPr = &cSpPr{}
+			}
+			xlsxChartSpace.Chart.Legend.SpPr.Ln = f.drawChartLn(&opts.Legend.Border)
+		}
+	}
 	xlsxChartSpace.Chart.PlotArea.SpPr = f.drawShapeFill(opts.PlotArea.Fill, xlsxChartSpace.Chart.PlotArea.SpPr)
 	xlsxChartSpace.Chart.PlotArea.DTable = f.drawPlotAreaDTable(opts)
 	addChart := func(c, p *cPlotArea) {
@@ -1104,8 +1148,8 @@ func (f *File) drawPlotAreaCatAx(pa *cPlotArea, opts *Chart) []*cAxs {
 		Delete:        &attrValBool{Val: boolPtr(opts.XAxis.None)},
 		AxPos:         &attrValString{Val: stringPtr(catAxPos[opts.XAxis.ReverseOrder])},
 		NumFmt:        &cNumFmt{FormatCode: "General"},
-		MajorTickMark: &attrValString{Val: stringPtr("none")},
-		MinorTickMark: &attrValString{Val: stringPtr("none")},
+		MajorTickMark: &attrValString{Val: stringPtr(chartTickMarkTypes[opts.XAxis.MajorTickMark])},
+		MinorTickMark: &attrValString{Val: stringPtr(chartTickMarkTypes[opts.XAxis.MinorTickMark])},
 		Title:         f.drawPlotAreaTitles(opts.XAxis.Title, ""),
 		TickLblPos:    &attrValString{Val: stringPtr(tickLblPosVal[opts.XAxis.TickLabelPosition])},
 		SpPr:          f.drawPlotAreaSpPr(),
@@ -1167,8 +1211,8 @@ func (f *File) drawPlotAreaValAx(pa *cPlotArea, opts *Chart) []*cAxs {
 		NumFmt: &cNumFmt{
 			FormatCode: chartValAxNumFmtFormatCode[opts.Type],
 		},
-		MajorTickMark: &attrValString{Val: stringPtr("none")},
-		MinorTickMark: &attrValString{Val: stringPtr("none")},
+		MajorTickMark: &attrValString{Val: stringPtr(chartTickMarkTypes[opts.YAxis.MajorTickMark])},
+		MinorTickMark: &attrValString{Val: stringPtr(chartTickMarkTypes[opts.YAxis.MinorTickMark])},
 		TickLblPos:    &attrValString{Val: stringPtr(tickLblPosVal[opts.YAxis.TickLabelPosition])},
 		SpPr:          f.drawPlotAreaSpPr(),
 		TxPr:          f.drawPlotAreaTxPr(&opts.YAxis),
@@ -1190,6 +1234,9 @@ func (f *File) drawPlotAreaValAx(pa *cPlotArea, opts *Chart) []*cAxs {
 	}
 	if opts.YAxis.MajorUnit != 0 {
 		ax.MajorUnit = &attrValFloat{Val: float64Ptr(opts.YAxis.MajorUnit)}
+	}
+	if opts.YAxis.MinorUnit != 0 {
+		ax.MinorUnit = &attrValFloat{Val: float64Ptr(opts.YAxis.MinorUnit)}
 	}
 	if opts.order > 0 && opts.YAxis.Secondary && pa.ValAx != nil {
 		ax.AxID = &attrValInt{Val: intPtr(opts.YAxis.axID)}
@@ -1279,6 +1326,31 @@ func (f *File) drawPlotAreaTitles(runs []RichTextRun, vert string) *cTitle {
 		title.Tx.Rich.BodyPr = aBodyPr{Rot: -5400000, Vert: vert}
 	}
 	return title
+}
+
+// drawAutoTitleDeleted returns the AutoTitleDeleted element if set.
+func (f *File) drawAutoTitleDeleted(opts *Chart) *cAutoTitleDeleted {
+	if opts.AutoTitleDeleted != nil {
+		return &cAutoTitleDeleted{Val: *opts.AutoTitleDeleted}
+	}
+	return nil
+}
+
+// drawTitleSpPr builds the SpPr (shape properties) for a chart title,
+// applying fill and border from opts.TitleFill and opts.TitleBorder.
+func (f *File) drawTitleSpPr(opts *Chart) cSpPr {
+	spPr := cSpPr{}
+	if opts.TitleFill.Type == "pattern" && opts.TitleFill.Pattern == 1 && len(opts.TitleFill.Color) == 1 {
+		spPr.SolidFill = &aSolidFill{SrgbClr: &aSrgbClr{Val: stringPtr(strings.TrimPrefix(opts.TitleFill.Color[0], "#"))}}
+		if opts.TitleFill.Transparency > 0 {
+			val := (100 - opts.TitleFill.Transparency) * 1000
+			spPr.SolidFill.SrgbClr.Alpha = &attrValInt{Val: &val}
+		}
+	}
+	if opts.TitleBorder.Type != ChartLineUnset {
+		spPr.Ln = f.drawChartLn(&opts.TitleBorder)
+	}
+	return spPr
 }
 
 // drawChartLayout converts a ChartLayout to a cLayout XML structure.
@@ -1420,11 +1492,15 @@ func (c *cChart) drawChartLegend(opts *Chart) {
 		c.Legend = nil
 		return
 	}
+	legendOverlay := boolPtr(false)
+	if opts.Legend.Overlay != nil {
+		legendOverlay = opts.Legend.Overlay
+	}
 	if c.Legend == nil {
 		c.Legend = &cLegend{
 			Layout:    drawChartLayout(opts.Legend.Layout),
 			LegendPos: &attrValString{Val: stringPtr(chartLegendPosition[opts.Legend.Position])},
-			Overlay:   &attrValBool{Val: boolPtr(false)},
+			Overlay:   &attrValBool{Val: legendOverlay},
 		}
 	}
 	if opts.Legend.Font != nil {

@@ -571,6 +571,10 @@ func TestGetCharts(t *testing.T) {
 	assert.Len(t, charts[0].Title, 1)
 	assert.Equal(t, "Clustered Column Chart", charts[0].Title[0].Text)
 	assert.Equal(t, "bottom", charts[0].Legend.Position)
+	// Verify chart position info (E1 = col 4, row 0 zero-based)
+	assert.NotNil(t, charts[0].Position)
+	assert.Equal(t, 4, charts[0].Position.FromCol)
+	assert.Equal(t, 0, charts[0].Position.FromRow)
 	assert.NoError(t, f2.Close())
 
 	// Test GetCharts with empty cell returns all charts on sheet
@@ -850,6 +854,141 @@ func TestGetChartsFullProperties(t *testing.T) {
 	assert.InDelta(t, 2.0, c.YAxis.MajorUnit, 1e-9)
 	assert.InDelta(t, 10.0, c.YAxis.LogBase, 1e-9)
 	assert.Equal(t, "#,##0", c.YAxis.NumFmt.CustomNumFmt)
+
+	assert.NoError(t, f2.Close())
+}
+
+func TestGetChartsAllProperties(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange", "Pear"},
+		{"Small", 2, 3, 3},
+		{"Normal", 5, 2, 4},
+		{"Large", 6, 7, 8},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	titleOverlay := true
+	plotVisOnly := true
+	showDLblsOverMax := true
+	autoTitleDeleted := false
+	legendOverlay := true
+	assert.NoError(t, f.AddChart(sheet, "E1", &Chart{
+		Type: Col,
+		Series: []ChartSeries{
+			{
+				Name:       "Sheet1!$A$2",
+				Categories: "Sheet1!$B$1:$D$1",
+				Values:     "Sheet1!$B$2:$D$2",
+				DataLabel:  ChartDataLabel{Font: Font{Bold: true, Size: 8, Color: "111111"}},
+			},
+		},
+		Title:            []RichTextRun{{Text: "All Props", Font: &Font{Bold: true, Size: 14, Color: "FF0000", Family: "Arial"}}},
+		TitleOverlay:     &titleOverlay,
+		TitleFill:        Fill{Type: "pattern", Color: []string{"CCCCCC"}, Pattern: 1},
+		TitleBorder:      ChartLine{Type: ChartLineSolid, Width: 1},
+		AutoTitleDeleted: &autoTitleDeleted,
+		View3D: &ChartView3D{
+			RotX:        intPtr(20),
+			RotY:        intPtr(30),
+			Perspective: intPtr(25),
+			RAngAx:      intPtr(1),
+		},
+		PlotVisOnly:      &plotVisOnly,
+		ShowDLblsOverMax: &showDLblsOverMax,
+		Legend: ChartLegend{
+			Position: "top",
+			Overlay:  &legendOverlay,
+			Font:     &Font{Bold: true, Size: 10, Color: "0000FF"},
+			Fill:     Fill{Type: "pattern", Color: []string{"EEEEEE"}, Pattern: 1},
+			Border:   ChartLine{Type: ChartLineSolid, Width: 1},
+		},
+		XAxis: ChartAxis{
+			Title:         []RichTextRun{{Text: "X Axis"}},
+			Font:          Font{Size: 9, Color: "333333"},
+			MajorTickMark: ChartTickMarkOutside,
+			MinorTickMark: ChartTickMarkInside,
+		},
+		YAxis: ChartAxis{
+			Title:         []RichTextRun{{Text: "Y Axis"}},
+			Font:          Font{Size: 9, Color: "666666"},
+			MinorUnit:     0.5,
+			MajorTickMark: ChartTickMarkCross,
+		},
+	}))
+
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+	c := charts[0]
+
+	// Title
+	assert.Len(t, c.Title, 1)
+	assert.Equal(t, "All Props", c.Title[0].Text)
+	assert.NotNil(t, c.Title[0].Font)
+	assert.True(t, c.Title[0].Font.Bold)
+	assert.InDelta(t, 14.0, c.Title[0].Font.Size, 1e-9)
+	assert.Equal(t, "FF0000", c.Title[0].Font.Color)
+	assert.Equal(t, "Arial", c.Title[0].Font.Family)
+
+	// Title overlay
+	assert.NotNil(t, c.TitleOverlay)
+	assert.True(t, *c.TitleOverlay)
+
+	// Title fill
+	assert.Equal(t, "CCCCCC", c.TitleFill.Color[0])
+
+	// AutoTitleDeleted
+	assert.NotNil(t, c.AutoTitleDeleted)
+	assert.False(t, *c.AutoTitleDeleted)
+
+	// View3D
+	assert.NotNil(t, c.View3D)
+	assert.Equal(t, 20, *c.View3D.RotX)
+	assert.Equal(t, 30, *c.View3D.RotY)
+	assert.Equal(t, 25, *c.View3D.Perspective)
+	assert.Equal(t, 1, *c.View3D.RAngAx)
+
+	// PlotVisOnly
+	assert.NotNil(t, c.PlotVisOnly)
+	assert.True(t, *c.PlotVisOnly)
+
+	// ShowDLblsOverMax
+	assert.NotNil(t, c.ShowDLblsOverMax)
+	assert.True(t, *c.ShowDLblsOverMax)
+
+	// Legend
+	assert.Equal(t, "top", c.Legend.Position)
+	assert.NotNil(t, c.Legend.Font)
+	assert.True(t, c.Legend.Font.Bold)
+	assert.NotNil(t, c.Legend.Overlay)
+	assert.True(t, *c.Legend.Overlay)
+	assert.Equal(t, "EEEEEE", c.Legend.Fill.Color[0])
+
+	// Axis titles
+	assert.Len(t, c.XAxis.Title, 1)
+	assert.Equal(t, "X Axis", c.XAxis.Title[0].Text)
+	assert.Len(t, c.YAxis.Title, 1)
+	assert.Equal(t, "Y Axis", c.YAxis.Title[0].Text)
+
+	// Axis tick marks
+	assert.Equal(t, ChartTickMarkOutside, c.XAxis.MajorTickMark)
+	assert.Equal(t, ChartTickMarkInside, c.XAxis.MinorTickMark)
+	assert.Equal(t, ChartTickMarkCross, c.YAxis.MajorTickMark)
+
+	// Y Axis minor unit
+	assert.InDelta(t, 0.5, c.YAxis.MinorUnit, 1e-9)
+
+	// Series data label font
+	assert.True(t, c.Series[0].DataLabel.Font.Bold)
+	assert.InDelta(t, 8.0, c.Series[0].DataLabel.Font.Size, 1e-9)
 
 	assert.NoError(t, f2.Close())
 }
