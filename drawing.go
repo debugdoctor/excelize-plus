@@ -1632,6 +1632,53 @@ func (f *File) addDrawingChart(sheet, drawingXML, cell string, width, height, rI
 	return err
 }
 
+// addDrawingChartWithPosition adds a chart graphic frame using exact
+// ChartPosition (From/To with offsets) instead of calculating from
+// cell + dimension pixels.
+func (f *File) addDrawingChartWithPosition(drawingXML string, pos *ChartPosition, rID int, opts *GraphicOptions) error {
+	content, cNvPrID, err := f.drawingParser(drawingXML)
+	if err != nil {
+		return err
+	}
+	twoCellAnchor := xdrCellAnchor{}
+	twoCellAnchor.EditAs = opts.Positioning
+	twoCellAnchor.From = &xlsxFrom{
+		Col: pos.FromCol, ColOff: pos.FromColOff,
+		Row: pos.FromRow, RowOff: pos.FromRowOff,
+	}
+	twoCellAnchor.To = &xlsxTo{
+		Col: pos.ToCol, ColOff: pos.ToColOff,
+		Row: pos.ToRow, RowOff: pos.ToRowOff,
+	}
+	graphicFrame := xlsxGraphicFrame{
+		NvGraphicFramePr: xlsxNvGraphicFramePr{
+			CNvPr: &xlsxCNvPr{
+				ID:   cNvPrID,
+				Name: "Chart " + strconv.Itoa(cNvPrID),
+			},
+		},
+		Graphic: &xlsxGraphic{
+			GraphicData: &xlsxGraphicData{
+				URI: NameSpaceDrawingMLChart.Value,
+				Chart: &xlsxChart{
+					C:   NameSpaceDrawingMLChart.Value,
+					R:   SourceRelationship.Value,
+					RID: "rId" + strconv.Itoa(rID),
+				},
+			},
+		},
+	}
+	graphic, _ := xml.Marshal(graphicFrame)
+	twoCellAnchor.GraphicFrame = string(graphic)
+	twoCellAnchor.ClientData = &xdrClientData{
+		FLocksWithSheet:  *opts.Locked,
+		FPrintsWithSheet: *opts.PrintObject,
+	}
+	content.TwoCellAnchor = append(content.TwoCellAnchor, &twoCellAnchor)
+	f.Drawings.Store(drawingXML, content)
+	return nil
+}
+
 // addSheetDrawingChart provides a function to add chart graphic frame for
 // chartsheet by given sheet, drawingXML, width, height, relationship index
 // and format sets.

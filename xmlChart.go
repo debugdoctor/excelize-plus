@@ -691,15 +691,17 @@ type ChartPlotArea struct {
 }
 
 // ChartPosition directly maps the position of a chart anchor in the worksheet.
+// Col/Row are zero-based indices; ColOff/RowOff are offsets in EMUs
+// (English Metric Units, 1 pt = 12700 EMUs).
 type ChartPosition struct {
-	FromCol    int
-	FromColOff int
-	FromRow    int
-	FromRowOff int
-	ToCol      int
-	ToColOff   int
-	ToRow      int
-	ToRowOff   int
+	FromCol    int // zero-based column index
+	FromColOff int // column offset in EMUs
+	FromRow    int // zero-based row index
+	FromRowOff int // row offset in EMUs
+	ToCol      int // zero-based column index
+	ToColOff   int // column offset in EMUs
+	ToRow      int // zero-based row index
+	ToRowOff   int // row offset in EMUs
 }
 
 // ChartView3D directly maps the 3D view settings of the chart.

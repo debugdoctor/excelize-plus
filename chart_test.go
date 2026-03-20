@@ -436,6 +436,76 @@ func TestAddChart(t *testing.T) {
 	})
 }
 
+func TestAddChartWithPosition(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange", "Pear"},
+		{"Small", 2, 3, 3},
+		{"Normal", 5, 2, 4},
+		{"Large", 6, 7, 8},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f.SetSheetRow(sheet, cell, &row))
+	}
+	// Write chart with exact position
+	pos := &ChartPosition{
+		FromCol: 4, FromColOff: 12345,
+		FromRow: 0, FromRowOff: 67890,
+		ToCol: 12, ToColOff: 11111,
+		ToRow: 15, ToRowOff: 22222,
+	}
+	assert.NoError(t, f.AddChartWithPosition(sheet, "E1", &Chart{
+		Type: Col,
+		Series: []ChartSeries{
+			{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$2:$D$2"},
+		},
+		Title:    []RichTextRun{{Text: "Position Test"}},
+		Position: pos,
+	}))
+
+	// Read back and verify exact position is preserved
+	var buf bytes.Buffer
+	assert.NoError(t, f.Write(&buf))
+	f2, err := OpenReader(&buf)
+	assert.NoError(t, err)
+
+	charts, err := f2.GetCharts(sheet, "")
+	assert.NoError(t, err)
+	assert.Len(t, charts, 1)
+	assert.NotNil(t, charts[0].Position)
+	p := charts[0].Position
+	assert.Equal(t, 4, p.FromCol)
+	assert.Equal(t, 12345, p.FromColOff)
+	assert.Equal(t, 0, p.FromRow)
+	assert.Equal(t, 67890, p.FromRowOff)
+	assert.Equal(t, 12, p.ToCol)
+	assert.Equal(t, 11111, p.ToColOff)
+	assert.Equal(t, 15, p.ToRow)
+	assert.Equal(t, 22222, p.ToRowOff)
+	assert.NoError(t, f2.Close())
+
+	// Test fallback: Position is nil, should behave like AddChart
+	f3 := NewFile()
+	for r, row := range [][]interface{}{
+		{nil, "Apple", "Orange", "Pear"},
+		{"Small", 2, 3, 3},
+	} {
+		cell, _ := CoordinatesToCellName(1, r+1)
+		assert.NoError(t, f3.SetSheetRow(sheet, cell, &row))
+	}
+	assert.NoError(t, f3.AddChartWithPosition(sheet, "E1", &Chart{
+		Type: Col,
+		Series: []ChartSeries{
+			{Name: "Sheet1!$A$2", Categories: "Sheet1!$B$1:$D$1", Values: "Sheet1!$B$2:$D$2"},
+		},
+	}))
+	charts2, err := f3.GetCharts(sheet, "E1")
+	assert.NoError(t, err)
+	assert.Len(t, charts2, 1)
+	assert.NoError(t, f3.Close())
+}
+
 func TestAddChartSheet(t *testing.T) {
 	categories := map[string]string{"A2": "Small", "A3": "Normal", "A4": "Large", "B1": "Apple", "C1": "Orange", "D1": "Pear"}
 	values := map[string]int{"B2": 2, "C2": 3, "D2": 3, "B3": 5, "C3": 2, "D3": 4, "B4": 6, "C4": 7, "D4": 8}

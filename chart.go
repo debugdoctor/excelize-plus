@@ -1212,6 +1212,41 @@ func (f *File) AddChart(sheet, cell string, chart *Chart, combo ...*Chart) error
 	return err
 }
 
+// AddChartWithPosition provides the method to add a chart in a sheet using
+// an exact ChartPosition (From/To with EMU offsets) instead of calculating
+// from cell + dimension. The cell parameter is used only to locate the
+// drawing relationship; the actual anchor position comes from chart.Position.
+// If chart.Position is nil, it falls back to the same behavior as AddChart.
+func (f *File) AddChartWithPosition(sheet, cell string, chart *Chart, combo ...*Chart) error {
+	if chart.Position == nil {
+		return f.AddChart(sheet, cell, chart, combo...)
+	}
+	ws, err := f.workSheetReader(sheet)
+	if err != nil {
+		return err
+	}
+	opts, comboCharts, err := f.getChartOptions(chart, combo)
+	if err != nil {
+		return err
+	}
+	drawingID := f.countDrawings() + 1
+	chartID := f.countCharts() + 1
+	drawingXML := "xl/drawings/drawing" + strconv.Itoa(drawingID) + ".xml"
+	drawingID, drawingXML = f.prepareDrawing(ws, drawingID, sheet, drawingXML)
+	drawingRels := "xl/drawings/_rels/drawing" + strconv.Itoa(drawingID) + ".xml.rels"
+	drawingRID := f.addRels(drawingRels, SourceRelationshipChart, "../charts/chart"+strconv.Itoa(chartID)+".xml", "")
+	if err = f.addDrawingChartWithPosition(drawingXML, opts.Position, drawingRID, &opts.Format); err != nil {
+		return err
+	}
+	f.addChart(opts, comboCharts)
+	if err = f.addContentTypePart(chartID, "chart"); err != nil {
+		return err
+	}
+	_ = f.addContentTypePart(drawingID, "drawings")
+	f.addSheetNameSpace(sheet, SourceRelationship)
+	return err
+}
+
 // AddChartSheet provides the method to create a chartsheet by given chart
 // format set (such as offset, scale, aspect ratio setting and print settings)
 // and properties set. In Excel a chartsheet is a worksheet that only contains
